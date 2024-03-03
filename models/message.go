@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"regexp"
 )
 
 // Message is a struct that holds a structered result of parsing the entry
@@ -105,7 +107,7 @@ type Message struct {
 	Properties map[int64]string
 }
 
-//SetProperties sets the message properties
+// SetProperties sets the message properties
 func (res *Message) SetProperties(msgProps MessageProperty) {
 	//res := Message{}
 	name := msgProps.Class
@@ -131,12 +133,23 @@ func (res *Message) SetProperties(msgProps MessageProperty) {
 	case 0xe1d:
 		res.Subject = dataString
 		break
-	case 0xc1f: //SENDER EMAIL ADDRESS
-	case 0x65: //SENT REPRESENTING EMAIL ADDRESS
-	case 0x3ffa: //LAST MODIFIER NAME
-	case 0x800d:
-	case 0x8008:
+	/*case 0xc1f: //SENDER EMAIL ADDRESS
+	if res.FromEmail == "" && strings.Contains(dataString, "@") {
 		res.FromEmail = dataString
+	}*/
+	case 0x65: //SENT REPRESENTING EMAIL ADDRESS
+		if res.FromEmail == "" && isValidEmail(dataString) {
+			res.FromEmail = dataString
+		}
+	case 0x3ffa: //LAST MODIFIER NAME
+		if res.FromName == "" {
+			res.FromName = dataString
+		}
+	case 0x800d:
+		if res.FromEmail == "" && isValidEmail(dataString) {
+			res.FromEmail = dataString
+		}
+	case 0x8008:
 		break
 	case 0x42:
 		res.FromName = dataString
@@ -199,12 +212,20 @@ func (res *Message) SetProperties(msgProps MessageProperty) {
 	res.Properties[class] = dataString
 }
 
-//GetHeaders returns headers
+func isValidEmail(email string) bool {
+	re := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$`)
+	if (len(email) > 0) && (len(email) > 60) {
+		return false
+	}
+	return re.MatchString(email)
+}
+
+// GetHeaders returns headers
 func (res *Message) GetHeaders() string {
 	return res.Headers
 }
 
-//ParseHeaders returns a map of key value of headers
+// ParseHeaders returns a map of key value of headers
 func (res *Message) ParseHeaders() map[string][]string {
 	a := strings.NewReader(res.GetHeaders())
 	tp := textproto.NewReader(bufio.NewReader(a))
