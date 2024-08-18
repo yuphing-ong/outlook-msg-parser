@@ -24,7 +24,7 @@ const PropertyStreamPrefix = "__substg1.0_"
 // ReplyToRegExp is a regex to extract the reply to header
 const ReplyToRegExp = "^Reply-To:\\s*(?:<?(?<nameOrAddress>.*?)>?)?\\s*(?:<(?<address>.*?)>)?$"
 
-//AnalyzeMsgFile analyzes the msg file and sets the properties
+// AnalyzeMsgFile analyzes the msg file and sets the properties
 func AnalyzeMsgFile(file string) (res *models.Message, err error) {
 	res = &models.Message{}
 	f, err := os.Open(file)
@@ -99,7 +99,7 @@ func getData(entry *mscfb.File, info models.OutlookMessageInformation) interface
 		}
 		return string(runes)
 	case 0x102:
-		return "type : : : 0x102"
+		//return "type : : : 0x102"
 	case 0x40:
 		bytes := make([]byte, entry.Size)
 		entry.Read(bytes)
@@ -119,7 +119,7 @@ func getData(entry *mscfb.File, info models.OutlookMessageInformation) interface
 	return ""
 }
 
-//getEntriesFromDoc get properties from directory entry embedded TODO and TOCOMPLETE
+// getEntriesFromDoc get properties from directory entry embedded TODO and TOCOMPLETE
 func getEntriesFromDoc(entry *mscfb.File) []mscfb.File {
 	result := make([]mscfb.File, 2)
 	headerLength := 4
