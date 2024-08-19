@@ -24,8 +24,16 @@ const PropertyStreamPrefix = "__substg1.0_"
 // ReplyToRegExp is a regex to extract the reply to header
 const ReplyToRegExp = "^Reply-To:\\s*(?:<?(?<nameOrAddress>.*?)>?)?\\s*(?:<(?<address>.*?)>)?$"
 
+func AnalyzeMsgFileWithDebug(file string) (res *models.Message, err error) {
+	return AnalyzeMsgFileStandard(file, true)
+}
+
 // AnalyzeMsgFile analyzes the msg file and sets the properties
 func AnalyzeMsgFile(file string) (res *models.Message, err error) {
+	return AnalyzeMsgFileStandard(file, false)
+}
+
+func AnalyzeMsgFileStandard(file string, debug bool) (res *models.Message, err error) {
 	res = &models.Message{}
 	f, err := os.Open(file)
 	if err != nil {
@@ -35,7 +43,7 @@ func AnalyzeMsgFile(file string) (res *models.Message, err error) {
 	if err != nil {
 		return nil, err
 	}
-	err = checkEntries(doc, res)
+	err = checkEntries(doc, res, debug)
 	//fmt.Println(res)
 	if err != nil {
 		return nil, err
@@ -43,13 +51,15 @@ func AnalyzeMsgFile(file string) (res *models.Message, err error) {
 	return res, nil
 }
 
-func checkEntries(doc *mscfb.Reader, res *models.Message) error {
+func checkEntries(doc *mscfb.Reader, res *models.Message, debug bool) error {
 	var err error
 	for entry, err := doc.Next(); err == nil; entry, err = doc.Next() {
 		if strings.HasPrefix(entry.Name, PropertyStreamPrefix) {
 			msg := outlookMessageProperty(entry)
 			res.SetProperties(msg)
-			fmt.Println("Entry:", entry, "Class:", msg.Class, "Mapi:", msg.Mapi, "Data:", msg.Data)
+			if debug {
+				fmt.Println("Entry:", entry, "Class:", msg.Class, "Mapi:", msg.Mapi, "Data:", msg.Data)
+			}
 		}
 	}
 	return err
