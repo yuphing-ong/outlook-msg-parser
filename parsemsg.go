@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/oucema001/OutlookMessageParser-go/models"
 	"github.com/richardlehane/mscfb"
+	"github.com/willthrom/OutlookMessageParser-go/models"
 	"golang.org/x/net/html/charset"
 )
 
