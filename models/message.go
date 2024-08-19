@@ -133,21 +133,31 @@ func (res *Message) SetProperties(msgProps MessageProperty) {
 	case 0xe1d:
 		res.Subject = dataString
 		break
-	/*case 0xc1f: //SENDER EMAIL ADDRESS
-	if res.FromEmail == "" && strings.Contains(dataString, "@") {
-		res.FromEmail = dataString
-	}*/
-	case 0x65: //SENT REPRESENTING EMAIL ADDRESS
+	case 0xc1f: // SENDER EMAIL ADDRESS
+		if isValidEmail(dataString) {
+			if res.FromEmail == "" {
+				res.FromEmail = dataString
+			} else if !strings.Contains(res.FromEmail, dataString) {
+				res.FromEmail = dataString + ", " + res.FromEmail
+			}
+		}
+	case 0x65: // SENT REPRESENTING EMAIL ADDRESS
 		if res.FromEmail == "" && isValidEmail(dataString) {
 			res.FromEmail = dataString
+		} else if !strings.Contains(res.FromEmail, dataString) {
+			res.FromEmail = dataString + ", " + res.FromEmail
 		}
-	case 0x3ffa: //LAST MODIFIER NAME
+	case 0x3ffa: // LAST MODIFIER NAME
 		if res.FromName == "" {
 			res.FromName = dataString
 		}
 	case 0x800d:
-		if res.FromEmail == "" && isValidEmail(dataString) {
-			res.FromEmail = dataString
+		if isValidEmail(dataString) {
+			if res.FromEmail == "" {
+				res.FromEmail = dataString
+			} else if !strings.Contains(res.FromEmail, dataString) {
+				res.FromEmail = dataString + ", " + res.FromEmail
+			}
 		}
 	case 0x8008:
 		break
