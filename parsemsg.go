@@ -49,6 +49,7 @@ func checkEntries(doc *mscfb.Reader, res *models.Message) error {
 		if strings.HasPrefix(entry.Name, PropertyStreamPrefix) {
 			msg := outlookMessageProperty(entry)
 			res.SetProperties(msg)
+			fmt.Println("Entry:", entry, "Class:", msg.Class, "Mapi:", msg.Mapi, "Data:", msg.data)
 		}
 	}
 	return err
@@ -57,6 +58,7 @@ func checkEntries(doc *mscfb.Reader, res *models.Message) error {
 func outlookMessageProperty(entry *mscfb.File) models.MessageProperty {
 	analysis := analyzeEntry(entry)
 	data := getData(entry, analysis)
+
 	messageProperty := models.MessageProperty{
 		Class: analysis.Class,
 		Mapi:  analysis.Mapi,
