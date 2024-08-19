@@ -101,7 +101,7 @@ func getData(entry *mscfb.File, info models.OutlookMessageInformation) interface
 		}
 		return string(runes)
 	case 0x102:
-		//return "type : : : 0x102"
+		return "type : : : 0x102"
 	case 0x40:
 		bytes := make([]byte, entry.Size)
 		entry.Read(bytes)
