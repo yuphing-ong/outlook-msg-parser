@@ -15,7 +15,7 @@ import (
 	"github.com/richardlehane/mscfb"
 	"golang.org/x/net/html/charset"
 
-	"outlook-msg-parser/models"
+	"github.com/willthrom/outlook-msg-parser/models"
 )
 
 const PropsKey = "__properties_version1.0"
