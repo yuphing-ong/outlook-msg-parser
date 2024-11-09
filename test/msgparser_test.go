@@ -1,8 +1,9 @@
 package main
 
 import (
-	msgparser "outlook-msg-parser"
 	"testing"
+
+	msgparser "github.com/willthrom/outlook-msg-parser"
 )
 
 func TestParseMsgFile(t *testing.T) {
