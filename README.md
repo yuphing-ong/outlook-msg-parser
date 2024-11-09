@@ -1,4 +1,4 @@
-# OutlookMessageParser-Go (Orinally from https://github.com/oucema001/OutlookMessageParser-Go )
+# outlook-msg-parser
 
 A Go library to parse `.msg` files from Microsoft Outlook.
 
@@ -11,6 +11,10 @@ This library is designed to handle various MAPI properties and extract relevant 
 - Handle attachments separately
 - Support for multiple MAPI property tags
 - Compatibility with different versions of Microsoft Outlook
+
+## Mentions to the original developer 
+I created this refactored version to clean the code, added further support to more version of the .msg files, new format types, logging, test and examples.
+Orinally from https://github.com/oucema001/OutlookMessageParser-Go 
 
 ## Installation
 
