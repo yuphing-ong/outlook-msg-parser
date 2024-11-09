@@ -1,227 +1,397 @@
 package models
 
 import (
-	"bufio"
-	"fmt"
+	"encoding/binary"
 	"log"
-	"net/textproto"
 	"strconv"
 	"strings"
 	"time"
 
 	"regexp"
+
+	"github.com/richardlehane/mscfb"
 )
 
 // Message is a struct that holds a structered result of parsing the entry
 type Message struct {
-	/**S
-	 * The message class as defined in the .msg file.
-	 */
-	MessageClass string
-	/**
-	 * The message Id.
-	 */
-	MessageID string
-	/**
-	 * The address part of From: mail address.
-	 */
-	FromEmail string
-	/**
-	 * The name part of the From: mail address
-	 */
-	FromName string
-	/**
-	 * The address part of To: mail address.
-	 */
-	ToEmail string
-	/**
-	 * The name part of the To: mail address
-	 */
-	ToName string
-	/**
-	 * The address part of Reply-To header
-	 */
-	ReplyToEmail string
-	/**
-	 * The name part of Reply-To header
-	 */
-	ReplyToName string
-	/**
-	 * The S/MIME part of the S/MIME header
-	 */
-	//OutlookSmime smime;
-	/**
-	 * The mail's subject.
-	 */
-	Subject string
-	/**
-	 * The normalized body text.
-	 */
-	BodyText string
-	/**
-	 * The displayed To: field
-	 */
-	DisplayTo string
-	/**
-	 * The displayed Cc: field
-	 */
-	DisplayCc string
-	/**
-	 * The displayed Bcc: field
-	 */
-	DisplayBcc string
-
-	/**
-	 * The body in RTF format (if available)
-	 */
-	BodyRTF string
-
-	/**
-	 * The body in HTML format (if available)
-	 */
-	BodyHTML string
-
-	/**
-	 * The body in HTML format (converted from RTF)
-	 */
-	ConvertedBodyHTML string
-	/**
-	 * Email headers (if available)
-	 */
-	Headers string
-
-	/**
-	 * Email Date
-	 */
-	Date time.Time
-
-	/**
-	 * Client Submit Time
-	 */
-	ClientSubmitTime time.Time
-
-	CreationDate time.Time
-
-	LastModificationDate time.Time
-
-	Properties map[int64]string
+	MessageClass         string                // PR_MESSAGE_CLASS
+	MessageID            string                // PR_INTERNET_MESSAGE_ID
+	Subject              string                // PR_SUBJECT
+	FromEmail            string                // PR_SENDER_EMAIL_ADDRESS
+	FromName             string                // PR_SENDER_NAME
+	To                   string                // PR_DISPLAY_TO
+	CC                   string                // PR_DISPLAY_CC
+	BCC                  string                // PR_DISPLAY_BCC
+	BodyPlainText        string                // PR_BODY
+	BodyHTML             string                // PR_HTML
+	ConvertedBodyHTML    string                // The body in HTML format (converted from RTF)
+	Headers              string                // Email headers (if available)
+	Date                 time.Time             // PR_MESSAGE_DELIVERY_TIME
+	ClientSubmitTime     time.Time             // PR_CLIENT_SUBMIT_TIME
+	CreationDate         time.Time             // PR_CREATION_TIME
+	LastModificationDate time.Time             // PR_LAST_MODIFICATION_TIME
+	Attachments          []Attachment          // Attachments
+	Properties           map[int64]interface{} // Other properties
 }
 
+type Attachment struct {
+	Name string
+	// Add other relevant fields as needed
+}
+
+const AttachmentPrefix = "__attach_"
+
 // SetProperties sets the message properties
-func (res *Message) SetProperties(msgProps MessageProperty) {
-	//res := Message{}
+func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 	name := msgProps.Class
 	data := msgProps.Data
 	if res.Properties == nil {
-		res.Properties = make(map[int64]string, 2)
+		res.Properties = make(map[int64]interface{}, 2)
 	}
 	class, err := strconv.ParseInt(name, 16, 32)
 	if err != nil {
 		log.Print("Parse Error")
 	}
-	dataString := data.(string)
+
+	// Check if the entry is an attachment and handle it separately
+	if strings.HasPrefix(name, AttachmentPrefix) {
+		//res.HandleAttachment(entry)
+		return
+	}
+
 	switch class {
 	case 0x1a:
-		res.MessageClass = dataString
-		break
+		// PR_MESSAGE_CLASS: The message class of the message
+		if res.MessageClass == "" {
+			res.MessageClass = data.(string)
+		}
+
 	case 0x1035:
-		res.MessageID = dataString
-		break
+		// PR_INTERNET_MESSAGE_ID: The Internet message ID of the message
+		if res.MessageID == "" {
+			res.MessageID = data.(string)
+		}
+
 	case 0x37:
-		res.Subject = dataString
-		break
+		// PR_SUBJECT: The subject of the message
+		if res.Subject == "" {
+			res.Subject = data.(string)
+		}
+
 	case 0xe1d:
-		res.Subject = dataString
-		break
-	case 0xc1f: // SENDER EMAIL ADDRESS
-		if isValidEmail(dataString) {
+		// PR_NORMALIZED_SUBJECT: The normalized subject of the message
+		if res.Subject == "" {
+			res.Subject = data.(string)
+		}
+
+	case 0xc1f:
+		// PR_SENDER_EMAIL_ADDRESS: The email address of the sender
+		if isValidEmail(data.(string)) {
 			if res.FromEmail == "" {
-				res.FromEmail = dataString
-			} else if !strings.Contains(res.FromEmail, dataString) {
-				res.FromEmail = dataString + ", " + res.FromEmail
+				res.FromEmail = data.(string)
+			} else if !strings.Contains(res.FromEmail, data.(string)) {
+				res.FromEmail = data.(string) + ", " + res.FromEmail
 			}
 		}
-	case 0x65: // SENT REPRESENTING EMAIL ADDRESS
-		if res.FromEmail == "" && isValidEmail(dataString) {
-			res.FromEmail = dataString
-		} else if !strings.Contains(res.FromEmail, dataString) {
-			res.FromEmail = dataString + ", " + res.FromEmail
+	case 0x65:
+		// PR_SENT_REPRESENTING_EMAIL_ADDRESS: The email address of the user represented by the sender
+		if res.FromEmail == "" && isValidEmail(data.(string)) {
+			res.FromEmail = data.(string)
+		} else if !strings.Contains(res.FromEmail, data.(string)) {
+			res.FromEmail = data.(string) + ", " + res.FromEmail
 		}
-	case 0x3ffa: // LAST MODIFIER NAME
+	case 0x3ffa:
+		// PR_LAST_MODIFIER_NAME: The name of the last user to modify the message
 		if res.FromName == "" {
-			res.FromName = dataString
+			res.FromName = data.(string)
 		}
 	case 0x800d:
-		if isValidEmail(dataString) {
-			if res.FromEmail == "" {
-				res.FromEmail = dataString
-			} else if !strings.Contains(res.FromEmail, dataString) {
-				res.FromEmail = dataString + ", " + res.FromEmail
+		// PR_DISPLAY_TO: The display names of the primary (To) recipients
+		if res.To == "" {
+			res.To = data.(string)
+		}
+
+	case 0x800e:
+		// PR_DISPLAY_CC: The display names of the carbon copy (CC) recipients
+		if res.CC == "" {
+			res.CC = data.(string)
+		}
+
+	case 0x800f:
+		// PR_DISPLAY_BCC: The display names of the blind carbon copy (BCC) recipients
+		if res.BCC == "" {
+			res.BCC = data.(string)
+		}
+
+	case 0x1000, 0x3ff9, 0x65e0, 0x65e2, 0xff9, 0xc24:
+		// PR_BODY: The plain text body of the message
+		if res.BodyPlainText == "" {
+			switch v := data.(type) {
+			case []uint8:
+				res.BodyPlainText = string(v)
+			case string:
+				res.BodyPlainText = v
+			default:
+				log.Printf("Unexpected type for property %x: %T", class, data)
 			}
 		}
-	case 0x8008:
-		break
-	case 0x42:
-		res.FromName = dataString
-		break
-	case 0x76:
-		res.ToEmail = dataString
-		break
-	case 0x8000:
-		res.ToEmail = dataString
-		break
-	case 0x3001:
-		res.ToName = dataString
-		break
-	case 0xe04:
-		res.DisplayTo = dataString
-		break
-	case 0xe03:
-		res.DisplayCc = dataString
-		break
-	case 0xe02:
-		res.DisplayBcc = dataString
-		break
-	case 0x1013:
-		res.BodyHTML = dataString
-		break
-	case 0x1000:
-		res.BodyText = dataString
-		break
-	case 0x1009:
-		res.BodyRTF = dataString
-		break
-	case 0x7d:
-		res.Headers = dataString
-		break
+
 	case 0x3007:
-		//fmt.Println("hahhahahahah+++++++++++++++++++++++", dataString)
-		//t, err := strconv.ParseInt(dataString, 2, 64)
-		//if err != nil {
-		//	log.Println(err)
-		//}
-		//res.CreationDate = time.Unix(0, t)
-		res.CreationDate = getTimeFromString(string(dataString))
+		// PR_CREATION_TIME: The creation time of the message
+		if res.CreationDate.IsZero() {
+			res.CreationDate = data.(time.Time)
+		}
 
 	case 0x3008:
-		//fmt.Println("hahhahahahah+++++++++++++++++++++++", dataString)
-		//t, err := strconv.ParseInt(dataString, 2, 64)
-		//if err != nil {
-		//	log.Println("custom", err)
-		//}
-		res.LastModificationDate = getTimeFromString(string(dataString))
-	case 0x39:
-		//fmt.Println("hahahhahahahha+++++++++++++++++++++++", dataString)
-		//t, err := strconv.ParseInt(dataString, 2, 64)
-		//if err != nil {
-		//	log.Println("custom", err)
-		//}
-		//res.ClientSubmitTime = time.Unix(0, t)
-		res.ClientSubmitTime = getTimeFromString(string(dataString))
-	}
-	res.Properties[class] = dataString
-}
+		// PR_LAST_MODIFICATION_TIME: The last modification time of the message
+		if res.LastModificationDate.IsZero() {
+			res.LastModificationDate = data.(time.Time)
+		}
 
+	case 0xe06:
+		// PR_CLIENT_SUBMIT_TIME: The client submit time of the message
+		if res.ClientSubmitTime.IsZero() {
+			res.ClientSubmitTime = data.(time.Time)
+		}
+
+	case 0xe0f:
+		// PR_MESSAGE_DELIVERY_TIME: The delivery time of the message
+		if res.Date.IsZero() {
+			res.Date = data.(time.Time)
+		}
+
+	case 0x0002:
+		// PR_IMPORTANCE: The importance level of the message
+		if intData, ok := data.([]uint8); ok {
+			res.Properties[class] = intData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x0003:
+		// PR_PRIORITY: The priority level of the message
+		if intData, ok := data.([]uint8); ok {
+			res.Properties[class] = intData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x0004:
+		// PR_PRIORITY: The priority level of the message
+		if floatData, ok := data.([]uint8); ok {
+			res.Properties[class] = floatData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x1001, 0x1013, 0x3ffb, 0x65e1, 0x65e3, 0x5ff7, 0xc25:
+		// PR_BODY_HTML: The HTML body of the message
+		if res.BodyHTML == "" {
+			switch v := data.(type) {
+			case []uint8:
+				res.BodyHTML = string(v)
+			case string:
+				res.BodyHTML = v
+			default:
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x1002:
+		// PR_REPORT_TEXT: Text of a report
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = string(byteData)
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x1008:
+		// PR_ORIGINATOR_DELIVERY_REPORT_REQUESTED: Indicates if a delivery report is requested
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = byteData[0] != 0
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x1009:
+		// PR_READ_RECEIPT_REQUESTED: Indicates if a read receipt is requested
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = byteData[0] != 0
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x1014:
+		// PR_RTF_SYNC_BODY_CRC: CRC of the RTF body
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = int32(binary.LittleEndian.Uint32(byteData))
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x1015:
+		// PR_RTF_SYNC_BODY_COUNT: Count of the RTF body
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = int32(binary.LittleEndian.Uint32(byteData))
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x003b:
+		// PR_ENTRYID: Entry identifier
+		if binData, ok := data.([]byte); ok {
+			res.Properties[class] = binData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x003f:
+		// PR_OBJECT_TYPE: Type of the object
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = int32(binary.LittleEndian.Uint32(byteData))
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x0041:
+		// PR_ICON: Icon of the message
+		if binData, ok := data.([]byte); ok {
+			res.Properties[class] = binData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x0051:
+		// PR_ACCESS: Access level of the message
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = int32(binary.LittleEndian.Uint32(byteData))
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x0071:
+		// PR_ACCESS_LEVEL: Access level of the message
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = int32(binary.LittleEndian.Uint32(byteData))
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x0c19:
+		// PR_SENDER_ENTRYID: Entry identifier of the sender
+		if binData, ok := data.([]byte); ok {
+			res.Properties[class] = binData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x0c1d:
+		// PR_SENT_REPRESENTING_ENTRYID: Entry identifier of the user represented by the sender
+		if binData, ok := data.([]byte); ok {
+			res.Properties[class] = binData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x300b:
+		// PR_HASATTACH: Indicates if the message has attachments
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = byteData[0] != 0
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0xe04:
+		// PR_DISPLAY_TO: The display names of the primary (To) recipients
+		if res.To == "" {
+			if byteData, ok := data.([]uint8); ok {
+				res.To = string(byteData)
+			} else if strData, ok := data.(string); ok {
+				res.To = strData
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0xe03:
+		// PR_DISPLAY_CC: The display names of the carbon copy (CC) recipients
+		if res.CC == "" {
+			if byteData, ok := data.([]uint8); ok {
+				res.CC = string(byteData)
+			} else if strData, ok := data.(string); ok {
+				res.CC = strData
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0xe02:
+		// PR_DISPLAY_BCC: The display names of the blind carbon copy (BCC) recipients
+		if res.BCC == "" {
+			if byteData, ok := data.([]uint8); ok {
+				res.BCC = string(byteData)
+			} else if strData, ok := data.(string); ok {
+				res.BCC = strData
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x8002:
+		// PR_TRANSPORT_MESSAGE_HEADERS: Transport message headers
+		if strData, ok := data.([]string); ok {
+			res.Properties[class] = strData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x0ff6:
+		// PR_CONVERSATION_TOPIC: Conversation topic
+		if res.Properties[class] == nil {
+			if byteData, ok := data.([]uint8); ok {
+				res.Properties[class] = string(byteData)
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x0fff:
+		// PR_CONVERSATION_INDEX: Conversation index
+		if binData, ok := data.([]byte); ok {
+			res.Properties[class] = binData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	default:
+		// Store other properties in the Properties map
+		if _, exists := res.Properties[class]; !exists {
+			if strData, ok := data.(string); ok {
+				res.Properties[class] = strData
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+	}
+}
 func isValidEmail(email string) bool {
 	re := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}$`)
 	if (len(email) > 0) && (len(email) > 60) {
@@ -230,32 +400,13 @@ func isValidEmail(email string) bool {
 	return re.MatchString(email)
 }
 
-// GetHeaders returns headers
-func (res *Message) GetHeaders() string {
-	return res.Headers
-}
-
-// ParseHeaders returns a map of key value of headers
-func (res *Message) ParseHeaders() map[string][]string {
-	a := strings.NewReader(res.GetHeaders())
-	tp := textproto.NewReader(bufio.NewReader(a))
-	hdr, err := tp.ReadMIMEHeader()
-	if err != nil {
-		fmt.Println(err)
+// HandleAttachment processes and stores attachment information
+func (res *Message) HandleAttachment(entry *mscfb.File) {
+	// Implement attachment handling logic here
+	// For example, store the attachment in a separate list or map
+	attachment := Attachment{
+		Name: entry.Name,
+		// Add other relevant fields and processing as needed
 	}
-	return hdr
-}
-
-func getTimeFromString(s string) (t time.Time) {
-	if s == "" {
-		return
-	}
-	var err error
-	t, err = time.Parse(time.RFC1123Z, s)
-	if err == nil {
-		return t
-	}
-
-	t, err = time.Parse("Mon, 2 Jan 2006 15:04:05 -0700", s)
-	return t
+	res.Attachments = append(res.Attachments, attachment)
 }

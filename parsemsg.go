@@ -1,4 +1,4 @@
-package parse
+package msgparser
 
 import (
 	"bytes"
@@ -6,14 +6,16 @@ import (
 	"fmt"
 	"io/ioutil"
 	"log"
+	"math"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/richardlehane/mscfb"
-	"github.com/willthrom/OutlookMessageParser-go/models"
 	"golang.org/x/net/html/charset"
+
+	"outlook-msg-parser/models"
 )
 
 const PropsKey = "__properties_version1.0"
@@ -24,16 +26,18 @@ const PropertyStreamPrefix = "__substg1.0_"
 // ReplyToRegExp is a regex to extract the reply to header
 const ReplyToRegExp = "^Reply-To:\\s*(?:<?(?<nameOrAddress>.*?)>?)?\\s*(?:<(?<address>.*?)>)?$"
 
-func AnalyzeMsgFileWithDebug(file string) (res *models.Message, err error) {
-	return AnalyzeMsgFileStandard(file, true)
+// ParseMsgFileWithDebug parses the msg file with debug information
+func ParseMsgFileWithDebug(file string) (res *models.Message, err error) {
+	return parseMsgFile(file, true)
 }
 
-// AnalyzeMsgFile analyzes the msg file and sets the properties
-func AnalyzeMsgFile(file string) (res *models.Message, err error) {
-	return AnalyzeMsgFileStandard(file, false)
+// ParseMsgFile parses the msg file and sets the properties
+func ParseMsgFile(file string) (res *models.Message, err error) {
+	return parseMsgFile(file, false)
 }
 
-func AnalyzeMsgFileStandard(file string, debug bool) (res *models.Message, err error) {
+// parseMsgFile is the internal function that parses the msg file and sets the properties
+func parseMsgFile(file string, debug bool) (res *models.Message, err error) {
 	res = &models.Message{}
 	f, err := os.Open(file)
 	if err != nil {
@@ -43,33 +47,33 @@ func AnalyzeMsgFileStandard(file string, debug bool) (res *models.Message, err e
 	if err != nil {
 		return nil, err
 	}
-	err = checkEntries(doc, res, debug)
-	//fmt.Println(res)
+	err = processEntries(doc, res, debug)
 	if err != nil {
 		return nil, err
 	}
 	return res, nil
 }
 
-func checkEntries(doc *mscfb.Reader, res *models.Message, debug bool) error {
-	var err error
+// processEntries iterates through the entries in the mscfb.Reader and processes each entry
+func processEntries(doc *mscfb.Reader, res *models.Message, debug bool) error {
 	for entry, err := doc.Next(); err == nil; entry, err = doc.Next() {
 		if strings.HasPrefix(entry.Name, PropertyStreamPrefix) {
-			msg := outlookMessageProperty(entry)
+			msg := extractMessageProperty(entry)
 			res.SetProperties(msg)
 			if debug {
 				fmt.Println("Entry:", entry, "Class:", msg.Class, "Mapi:", msg.Mapi, "Data:", msg.Data)
 			}
 		}
 	}
-	return err
+	return nil
 }
 
-func outlookMessageProperty(entry *mscfb.File) models.MessageProperty {
-	analysis := analyzeEntry(entry)
-	data := getData(entry, analysis)
+// extractMessageProperty processes an entry and returns a MessageEntryProperty
+func extractMessageProperty(entry *mscfb.File) models.MessageEntryProperty {
+	analysis := parseEntryName(entry)
+	data := extractData(entry, analysis)
 
-	messageProperty := models.MessageProperty{
+	messageProperty := models.MessageEntryProperty{
 		Class: analysis.Class,
 		Mapi:  analysis.Mapi,
 		Data:  data,
@@ -77,7 +81,8 @@ func outlookMessageProperty(entry *mscfb.File) models.MessageProperty {
 	return messageProperty
 }
 
-func getData(entry *mscfb.File, info models.OutlookMessageInformation) interface{} {
+// extractData extracts the data from the entry based on the analysis result
+func extractData(entry *mscfb.File, info models.MessageEntryProperty) interface{} {
 	if info.Class == "" {
 		return "class null"
 	}
@@ -86,24 +91,21 @@ func getData(entry *mscfb.File, info models.OutlookMessageInformation) interface
 	case -1:
 		return "-1"
 	case 0x1e:
+		// PT_STRING8: A null-terminated 8-bit character string
 		bytes2 := make([]byte, entry.Size)
 		entry.Read(bytes2)
 		read, _ := charset.NewReader(bytes.NewReader(bytes2), "ISO-8859-1")
 		if read != nil {
 			resu, _ := ioutil.ReadAll(read)
-			_ = resu
-
 			return string(resu)
 		}
-		//return "type : : : 0X1E"
 	case 0x1f:
+		// PT_UNICODE: A null-terminated Unicode string
 		bytes2 := make([]byte, entry.Size)
 		entry.Read(bytes2)
-		//fmt.Println("++++++++++++++++++++", string(bytes2))
-		//	read, _ := charset.NewReader(bytes.NewReader(bytes2), "utf-16")
 		runes := make([]rune, len(bytes2)/2)
 		c := 0
-		for i := 0; i < len(bytes2)-1; i = i + 2 {
+		for i := 0; i < len(bytes2)-1; i += 2 {
 			ch := (int)(bytes2[i+1])
 			cl := (int)(bytes2[i]) & 0xff
 			runes[c] = (rune)((ch << 8) + cl)
@@ -111,174 +113,210 @@ func getData(entry *mscfb.File, info models.OutlookMessageInformation) interface
 		}
 		return string(runes)
 	case 0x102:
-		return "type : : : 0x102"
+		// PT_BINARY: A binary value
+		bytes2 := make([]byte, entry.Size)
+		entry.Read(bytes2)
+		return bytes2
 	case 0x40:
+		// PT_SYSTIME: A 64-bit integer representing the number of 100-nanosecond intervals since January 1, 1601
 		bytes := make([]byte, entry.Size)
 		entry.Read(bytes)
-		buf := make([]byte, 8, 8)
 		if len(bytes) > 0 {
-			buf = bytes[0 : len(bytes)-1]
-			a := binary.BigEndian.Uint64(buf)
+			buf := bytes[:8]
+			a := binary.LittleEndian.Uint64(buf)
 			a /= 10000
 			a -= 11644473600000
-			//return time.Date(a).String()
-			return "type : : : 0x40" + time.Unix(0, int64(a)).String()
+			return time.Unix(0, int64(a)*int64(time.Millisecond)).String()
 		}
-		return "type : : : 0x40"
+	case 0x0002:
+		// PT_I2: A 16-bit integer
+		bytes := make([]byte, 2)
+		entry.Read(bytes)
+		return int16(binary.LittleEndian.Uint16(bytes))
+	case 0x0003:
+		// PT_LONG: A 32-bit integer
+		bytes := make([]byte, 4)
+		entry.Read(bytes)
+		return int32(binary.LittleEndian.Uint32(bytes))
+	case 0x0004:
+		// PT_R4: A 4-byte floating point number
+		bytes := make([]byte, 4)
+		entry.Read(bytes)
+		return math.Float32frombits(binary.LittleEndian.Uint32(bytes))
+	case 0x0005:
+		// PT_DOUBLE: An 8-byte floating point number
+		bytes := make([]byte, 8)
+		entry.Read(bytes)
+		return math.Float64frombits(binary.LittleEndian.Uint64(bytes))
+	case 0x0006:
+		// PT_CURRENCY: A 64-bit integer representing a currency value
+		bytes := make([]byte, 8)
+		entry.Read(bytes)
+		return int64(binary.LittleEndian.Uint64(bytes))
+	case 0x0007:
+		// PT_APPTIME: A double representing the number of days since December 30, 1899
+		bytes := make([]byte, 8)
+		entry.Read(bytes)
+		return math.Float64frombits(binary.LittleEndian.Uint64(bytes))
+	case 0x000B:
+		// PT_BOOLEAN: A Boolean value
+		bytes := make([]byte, 2)
+		entry.Read(bytes)
+		return binary.LittleEndian.Uint16(bytes) != 0
+	case 0x0014:
+		// PT_I8: A 64-bit integer
+		bytes := make([]byte, 8)
+		entry.Read(bytes)
+		return int64(binary.LittleEndian.Uint64(bytes))
+	case 0x0048:
+		// PT_CLSID: A GUID
+		bytes := make([]byte, 16)
+		entry.Read(bytes)
+		return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", binary.LittleEndian.Uint32(bytes[0:4]), binary.LittleEndian.Uint16(bytes[4:6]), binary.LittleEndian.Uint16(bytes[6:8]), binary.BigEndian.Uint16(bytes[8:10]), bytes[10:16])
+	case 0x00FB:
+		// PT_SVREID: A server entry identifier
+		bytes := make([]byte, entry.Size)
+		entry.Read(bytes)
+		return bytes
+	case 0x1002:
+		// PT_MV_I2: A multiple-value 16-bit integer
+		count := entry.Size / 2
+		values := make([]int16, count)
+		for i := 0; i < int(count); i++ {
+			bytes := make([]byte, 2)
+			entry.Read(bytes)
+			values[i] = int16(binary.LittleEndian.Uint16(bytes))
+		}
+		return values
+	case 0x1003:
+		// PT_MV_LONG: A multiple-value 32-bit integer
+		count := entry.Size / 4
+		values := make([]int32, count)
+		for i := 0; i < int(count); i++ {
+			bytes := make([]byte, 4)
+			entry.Read(bytes)
+			values[i] = int32(binary.LittleEndian.Uint32(bytes))
+		}
+		return values
+	case 0x1004:
+		// PT_MV_R4: A multiple-value 4-byte floating point number
+		count := entry.Size / 4
+		values := make([]float32, count)
+		for i := 0; i < int(count); i++ {
+			bytes := make([]byte, 4)
+			entry.Read(bytes)
+			values[i] = math.Float32frombits(binary.LittleEndian.Uint32(bytes))
+		}
+		return values
+	case 0x1005:
+		// PT_MV_DOUBLE: A multiple-value 8-byte floating point number
+		count := entry.Size / 8
+		values := make([]float64, count)
+		for i := 0; i < int(count); i++ {
+			bytes := make([]byte, 8)
+			entry.Read(bytes)
+			values[i] = math.Float64frombits(binary.LittleEndian.Uint64(bytes))
+		}
+		return values
+	case 0x1006:
+		// PT_MV_CURRENCY: A multiple-value currency value
+		count := entry.Size / 8
+		values := make([]int64, count)
+		for i := 0; i < int(count); i++ {
+			bytes := make([]byte, 8)
+			entry.Read(bytes)
+			values[i] = int64(binary.LittleEndian.Uint64(bytes))
+		}
+		return values
+	case 0x1007:
+		// PT_MV_APPTIME: A multiple-value application time
+		count := entry.Size / 8
+		values := make([]float64, count)
+		for i := 0; i < int(count); i++ {
+			bytes := make([]byte, 8)
+			entry.Read(bytes)
+			values[i] = math.Float64frombits(binary.LittleEndian.Uint64(bytes))
+		}
+		return values
+	case 0x1040:
+		// PT_MV_SYSTIME: A multiple-value system time
+		count := entry.Size / 8
+		values := make([]time.Time, count)
+		for i := 0; i < int(count); i++ {
+			bytes := make([]byte, 8)
+			entry.Read(bytes)
+			a := binary.LittleEndian.Uint64(bytes)
+			a /= 10000
+			a -= 11644473600000
+			values[i] = time.Unix(0, int64(a)*int64(time.Millisecond))
+		}
+		return values
+	case 0x101E:
+		// PT_MV_STRING8: A multiple-value null-terminated 8-bit character string
+		bytes := make([]byte, entry.Size)
+		entry.Read(bytes)
+		strs := strings.Split(string(bytes), "\x00")
+		return strs[:len(strs)-1] // Remove the last empty string after the final null terminator
+	case 0x101F:
+		// PT_MV_UNICODE: A multiple-value null-terminated Unicode string
+		bytes := make([]byte, entry.Size)
+		entry.Read(bytes)
+		runes := make([]rune, len(bytes)/2)
+		c := 0
+		for i := 0; i < len(bytes)-1; i += 2 {
+			ch := (int)(bytes[i+1])
+			cl := (int)(bytes[i]) & 0xff
+			runes[c] = (rune)((ch << 8) + cl)
+			c++
+		}
+		strs := strings.Split(string(runes), "\x00")
+		return strs[:len(strs)-1] // Remove the last empty string after the final null terminator
+	case 0x1102:
+		// PT_MV_BINARY: A multiple-value binary value
+		bytes := make([]byte, entry.Size)
+		entry.Read(bytes)
+		return bytes
+	case 0x1048:
+		// PT_MV_CLSID: A multiple-value GUID
+		count := entry.Size / 16
+		values := make([]string, count)
+		for i := 0; i < int(count); i++ {
+			bytes := make([]byte, 16)
+			entry.Read(bytes)
+			values[i] = fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", binary.LittleEndian.Uint32(bytes[0:4]), binary.LittleEndian.Uint16(bytes[4:6]), binary.LittleEndian.Uint16(bytes[6:8]), binary.BigEndian.Uint16(bytes[8:10]), bytes[10:16])
+		}
+		return values
+	case 0x10FB:
+		// PT_MV_SVREID: A multiple-value server entry identifier
+		bytes := make([]byte, entry.Size)
+		entry.Read(bytes)
+		return bytes
 	default:
-		return "default mapi : " + string(mapi)
+		return fmt.Sprintf("default mapi: %x", mapi)
 	}
 	return ""
 }
 
-// getEntriesFromDoc get properties from directory entry embedded TODO and TOCOMPLETE
-func getEntriesFromDoc(entry *mscfb.File) []mscfb.File {
-	result := make([]mscfb.File, 2)
-	headerLength := 4
-	flagsLength := 4
-	bufHeader := make([]byte, headerLength)
-	//bufHeader = buf[0:headerLength]
-	var header strings.Builder
-	//fmt.Println("hello")
-
-	for k, err := entry.Read(bufHeader); err == nil && k > 0 && len(bufHeader) == headerLength; k, err = entry.Read(bufHeader) {
-		//fmt.Println(err)
-		//fmt.Println("hello")
-
-		b, _ := entry.Seek(4, 1)
-
-		_ = b
-		header.Reset()
-		//j := 0
-		for i := len(bufHeader) - 1; i >= 0; i-- {
-			header.WriteString(bytesToHex(bufHeader[i]))
-			//fmt.Println("byte : ", bufHeader[j])
-			//j++
-		}
-
-		class := header.String()[0:4]
-		typeEntry := header.String()[4:]
-		if typeEntry != "" {
-
-			typeNumber, err := strconv.ParseInt(typeEntry, 16, 32)
-			if err != nil {
-				log.Print("Parse Error")
-			}
-			//fmt.Println("type number : ", typeNumber)
-			if class != "0000" {
-				bytes2 := make([]byte, flagsLength)
-
-				entry.Read(bytes2)
-				entry.Seek((int64)(len(bytes2)), 1)
-				var k strings.Builder
-				for _, b := range bytes2 {
-					k.WriteString(bytesToHex(b))
-				}
-				//fmt.Println("flags :  ", k.String())
-				if typeNumber == 0x48 || typeNumber == 0x1e || typeNumber == 0x1f || typeNumber == 0xd || typeNumber == 0x102 {
-					//bytes1 := make([]byte, 4)
-					//bytes2 = nil
-					//fmt.Println("x")
-					bytes2 = make([]byte, 4, 4)
-					entry.Seek((int64)(cap(bytes2)), 1)
-				} else if typeNumber == 0x3 || typeNumber == 0x4 || typeNumber == 0xa || typeNumber == 0xb || typeNumber == 0x2 {
-					//SHORT
-					// 4 bytes
-					//bytes2 = nil
-					//fmt.Println("y")
-					bytes2 = make([]byte, 8, 8)
-					entry.Read(bytes2[:4])
-					entry.Seek((int64)(len(bytes2)), 1)
-					entry.Read(bytes2[:8])
-					entry.Seek((int64)(len(bytes2)), 1)
-					//entry.Read(bytes2)
-					//entry.Seek((int64)(len(bytes2)), 1)
-				} else if typeNumber == 0x5 || typeNumber == 0x7 || typeNumber == 0x6 || typeNumber == 0x14 || typeNumber == 0x40 {
-					// 8 bytes
-					//bytes2 = nil
-					//buf := make([]byte, 8, 8)
-					bytes2 = make([]byte, 8, 8)
-					entry.Read(bytes2)
-					entry.Seek((int64)(cap(bytes2)), 1)
-					//fmt.Println("8 bytes : ", len(bytes2))
-					//fmt.Println("value : ", string(bytes2))
-					//fmt.Println("number : ", typeNumber)
-					//fmt.Println("buf size : ", len(buf))
-					var SEC_TO_UNIX_EPOCH int64
-					SEC_TO_UNIX_EPOCH = 11644473600
-					var WINDOWS_TICK int64
-					WINDOWS_TICK = 10000000
-					a := int64(binary.BigEndian.Uint64(bytes2))
-
-					fmt.Println("first : ", int64(a))
-					a = (a / WINDOWS_TICK) - SEC_TO_UNIX_EPOCH
-					b := a / 10000
-					b = b - 11644473600000
-					fmt.Println("milli : ", b)
-					fmt.Println(time.Unix(a, 0).String())
-				}
-
-				if bytes2 != nil {
-
-					name := "__substg1.0_" + header.String()
-					var initial uint16
-					initial = 95
-					//var r io.Reade
-					//a := smd.New()
-					smd := new(mscfb.File)
-					smd = &mscfb.File{
-						Name:    name,
-						Initial: initial,
-						Path:    []string{header.String()},
-						Size:    10000,
-						//i:    0,
-						//	i : 0,
-						//r: &r,
-					}
-					//s,error:= mscfb.New()
-					leng := (int64)(len("__substg1.0_"))
-
-					_ = leng
-					_ = smd
-					if bytes2 != nil {
-						fmt.Println(string(bytes2))
-					}
-				}
-				bytes2 = nil
-				bufHeader = nil
-				bufHeader = make([]byte, headerLength)
-				header.Reset()
-			}
-
-		}
-	}
-	return result
-}
-
-func analyzeEntry(entry *mscfb.File) models.OutlookMessageInformation {
+func parseEntryName(entry *mscfb.File) models.MessageEntryProperty {
 	name := entry.Name
-	res := models.OutlookMessageInformation{}
+	res := models.MessageEntryProperty{}
 	if strings.HasPrefix(name, PropertyStreamPrefix) {
-		var class string
-		var typeEntry string
-		var mapi int64
 		val := name[len(PropertyStreamPrefix):]
-		class = val[0:4]
-		typeEntry = val[4:8]
+		if len(val) < 8 {
+			log.Println("Invalid entry name length")
+			return res
+		}
+		class := val[0:4]
+		typeEntry := val[4:8]
 		mapi, err := strconv.ParseInt(typeEntry, 16, 64)
 		if err != nil {
-			log.Println(err)
+			log.Printf("Error parsing MAPI type: %v", err)
+			return res
 		}
-		res = models.OutlookMessageInformation{
+		res = models.MessageEntryProperty{
 			Class: class,
 			Mapi:  mapi,
 		}
 	}
-
 	return res
-}
-
-func bytesToHex(bytes byte) string {
-	//fmt.Printf("%02x", bytes&0xff)
-	return fmt.Sprintf("%02x", bytes&0xff)
 }
