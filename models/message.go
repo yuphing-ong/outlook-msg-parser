@@ -14,24 +14,30 @@ import (
 
 // Message is a struct that holds a structered result of parsing the entry
 type Message struct {
-	MessageClass         string                // PR_MESSAGE_CLASS
-	MessageID            string                // PR_INTERNET_MESSAGE_ID
-	Subject              string                // PR_SUBJECT
-	FromEmail            string                // PR_SENDER_EMAIL_ADDRESS
-	FromName             string                // PR_SENDER_NAME
-	To                   string                // PR_DISPLAY_TO
-	CC                   string                // PR_DISPLAY_CC
-	BCC                  string                // PR_DISPLAY_BCC
-	BodyPlainText        string                // PR_BODY
-	BodyHTML             string                // PR_HTML
-	ConvertedBodyHTML    string                // The body in HTML format (converted from RTF)
-	Headers              string                // Email headers (if available)
-	Date                 time.Time             // PR_MESSAGE_DELIVERY_TIME
-	ClientSubmitTime     time.Time             // PR_CLIENT_SUBMIT_TIME
-	CreationDate         time.Time             // PR_CREATION_TIME
-	LastModificationDate time.Time             // PR_LAST_MODIFICATION_TIME
-	Attachments          []Attachment          // Attachments
-	Properties           map[int64]interface{} // Other properties
+	MessageClass            string                // PR_MESSAGE_CLASS
+	MessageID               string                // PR_INTERNET_MESSAGE_ID
+	Subject                 string                // PR_SUBJECT
+	FromEmail               string                // PR_SENDER_EMAIL_ADDRESS
+	FromName                string                // PR_SENDER_NAME
+	ToDisplay               string                // PR_DISPLAY_TO
+	To                      string                // PR_DISPLAY_TO
+	CCDisplay               string                // PR_DISPLAY_CC
+	BCCDisplay              string                // PR_DISPLAY_BCC
+	CC                      string                // PR_DISPLAY_CC
+	BCC                     string                // PR_DISPLAY_BCC
+	BodyPlainText           string                // PR_BODY
+	BodyHTML                string                // PR_HTML
+	ConvertedBodyHTML       string                // The body in HTML format (converted from RTF)
+	Headers                 string                // Email headers (if available)
+	Date                    time.Time             // PR_MESSAGE_DELIVERY_TIME
+	ClientSubmitTime        time.Time             // PR_CLIENT_SUBMIT_TIME
+	CreationDate            time.Time             // PR_CREATION_TIME
+	LastModificationDate    time.Time             // PR_LAST_MODIFICATION_TIME
+	Attachments             []Attachment          // Attachments
+	Properties              map[int64]interface{} // Other properties
+	TransportMessageHeaders string                // Message Headers
+	Address                 []string              // Email Address
+	LastRecipient           int                   // Last recipient of the message
 }
 
 type Attachment struct {
@@ -105,25 +111,8 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 		if res.FromName == "" {
 			res.FromName = data.(string)
 		}
-	case 0x800d:
-		// PR_DISPLAY_TO: The display names of the primary (To) recipients
-		if res.To == "" {
-			res.To = data.(string)
-		}
 
-	case 0x800e:
-		// PR_DISPLAY_CC: The display names of the carbon copy (CC) recipients
-		if res.CC == "" {
-			res.CC = data.(string)
-		}
-
-	case 0x800f:
-		// PR_DISPLAY_BCC: The display names of the blind carbon copy (BCC) recipients
-		if res.BCC == "" {
-			res.BCC = data.(string)
-		}
-
-	case 0x1000, 0x3ff9, 0x65e0, 0x65e2, 0xff9, 0xc24:
+	case 0x1000, 0x3ff9, 0x65e0, 0x65e2, 0xff9, 0x120b:
 		// PR_BODY: The plain text body of the message
 		if res.BodyPlainText == "" {
 			switch v := data.(type) {
@@ -184,7 +173,7 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 			log.Printf("Unexpected type for property %x: %T", class, data)
 		}
 
-	case 0x1001, 0x1013, 0x3ffb, 0x65e1, 0x65e3, 0x5ff7, 0xc25:
+	case 0x1001, 0x1013, 0x3ffb, 0x65e1, 0x65e3, 0x5ff7, 0xc25, 0xf03:
 		// PR_BODY_HTML: The HTML body of the message
 		if res.BodyHTML == "" {
 			switch v := data.(type) {
@@ -319,45 +308,55 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 			}
 		}
 
-	case 0xe04:
+	case 0xe04, 0x800d:
 		// PR_DISPLAY_TO: The display names of the primary (To) recipients
-		if res.To == "" {
-			if byteData, ok := data.([]uint8); ok {
-				res.To = string(byteData)
-			} else if strData, ok := data.(string); ok {
-				res.To = strData
-			} else {
-				log.Printf("Unexpected type for property %x: %T", class, data)
+		if byteData, ok := data.([]uint8); ok {
+			if res.ToDisplay == "" {
+				res.ToDisplay = string(byteData)
 			}
+		} else if strData, ok := data.(string); ok {
+			if res.ToDisplay == "" {
+				res.ToDisplay = strData
+			}
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
 		}
 
-	case 0xe03:
+	case 0xe03, 0x800e:
 		// PR_DISPLAY_CC: The display names of the carbon copy (CC) recipients
-		if res.CC == "" {
-			if byteData, ok := data.([]uint8); ok {
-				res.CC = string(byteData)
-			} else if strData, ok := data.(string); ok {
-				res.CC = strData
-			} else {
-				log.Printf("Unexpected type for property %x: %T", class, data)
+
+		if byteData, ok := data.([]uint8); ok {
+			if res.CCDisplay == "" {
+				res.CCDisplay = string(byteData)
 			}
+		} else if strData, ok := data.(string); ok {
+			if res.CCDisplay == "" {
+				res.CCDisplay = strData
+			}
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
 		}
 
-	case 0xe02:
+	case 0xe02, 0x800f:
 		// PR_DISPLAY_BCC: The display names of the blind carbon copy (BCC) recipients
-		if res.BCC == "" {
-			if byteData, ok := data.([]uint8); ok {
-				res.BCC = string(byteData)
-			} else if strData, ok := data.(string); ok {
-				res.BCC = strData
-			} else {
-				log.Printf("Unexpected type for property %x: %T", class, data)
+
+		if byteData, ok := data.([]uint8); ok {
+			if res.BCCDisplay == "" {
+				res.BCCDisplay = string(byteData)
 			}
+		} else if strData, ok := data.(string); ok {
+			if res.BCCDisplay == "" {
+				res.BCCDisplay = strData
+			}
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
 		}
 
 	case 0x8002:
 		// PR_TRANSPORT_MESSAGE_HEADERS: Transport message headers
 		if strData, ok := data.([]string); ok {
+			res.Properties[class] = strData
+		} else if strData, ok := data.(string); ok {
 			res.Properties[class] = strData
 		} else {
 			log.Printf("Unexpected type for property %x: %T", class, data)
@@ -381,8 +380,219 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 			log.Printf("Unexpected type for property %x: %T", class, data)
 		}
 
+		// Documented but not implemented properties
+	case 0x1005:
+		// PR_BODY_CONTENT_LOCATION: Content location of the body
+		// Not implemented
+
+	case 0x1006:
+		// PR_BODY_CONTENT_ID: Content ID of the body
+		// Not implemented
+
+	case 0x1007:
+		// PR_BODY_CONTENT_TYPE: Content type of the body
+		// Not implemented
+
+	case 0x100b:
+		// PR_BODY_ENCODING: Encoding of the body
+		// Not implemented
+
+	case 0x100c:
+		// PR_BODY_SIZE: Size of the body
+		// Not implemented
+
+	case 0x100d:
+		// PR_BODY_TAG: Tag of the body
+		// Not implemented
+
+	case 0x100f:
+		// PR_BODY_TYPE: Type of the body
+		// Not implemented
+
+	case 0x1011:
+		// PR_BODY_CHARSET: Charset of the body
+		// Not implemented
+
+	case 0x1016:
+		// PR_BODY_LANGUAGE: Language of the body
+		// Not implemented
+
+	case 0x1017:
+		// PR_BODY_SUBTYPE: Subtype of the body
+		// Not implemented
+
+	case 0x1018:
+		// PR_BODY_TRANSFER_ENCODING: Transfer encoding of the body
+		// Not implemented
+
+	case 0x1019:
+		// PR_BODY_DISPOSITION: Disposition of the body
+		// Not implemented
+
+	case 0x101a:
+		// PR_BODY_DISPOSITION_TYPE: Disposition type of the body
+		// Not implemented
+
+	case 0x101b:
+		// PR_BODY_DISPOSITION_PARAMS: Disposition parameters of the body
+		// Not implemented
+
+	case 0x101c:
+		// PR_BODY_DISPOSITION_FILENAME: Disposition filename of the body
+		// Not implemented
+
+	case 0x101e:
+		// PR_BODY_DISPOSITION_CREATION_DATE: Disposition creation date of the body
+		// Not implemented
+
+	case 0x43:
+		// PR_BODY_DISPOSITION_MODIFICATION_DATE: Disposition modification date of the body
+		// Not implemented
+
+	case 0x52:
+		// PR_BODY_DISPOSITION_READ_DATE: Disposition read date of the body
+		// Not implemented
+
+	case 0xe0b:
+		// PR_BODY_CRC: CRC of the message body
+		// Not implemented
+
+	case 0xe4b:
+		// PR_RTF_SYNC_BODY_CRC: CRC of the RTF body
+		// Not implemented
+
+	case 0xe4c:
+		// PR_RTF_SYNC_BODY_COUNT: Count of the RTF body
+		// Not implemented
+
+	case 0xe58:
+		// PR_RTF_SYNC_BODY_TAG: Tag of the RTF body
+		// Not implemented
+
+	case 0xe59:
+		// PR_RTF_SYNC_BODY_TAG: Tag of the RTF body
+		// Not implemented
+
+	case 0x3013:
+		// PR_CREATION_TIME: Creation time of the message
+		// Not implemented
+
+	case 0x3014:
+		// PR_LAST_MODIFICATION_TIME: Last modification time of the message
+		// Not implemented
+
+	case 0x8000:
+		// PR_TRANSPORT_MESSAGE_HEADERS: Transport message headers
+		// Not implemented
+
+	case 0x8007:
+		// PR_TRANSPORT_MESSAGE_HEADERS: Transport message headers
+		// Not implemented
+
+	case 0x8008:
+		// PR_TRANSPORT_MESSAGE_HEADERS: Transport message headers
+		// Not implemented
+
+	case 0x800b:
+		// PR_TRANSPORT_MESSAGE_HEADERS: Transport message headers
+		// Not implemented
+
+	case 0x802c:
+		// PR_TRANSPORT_MESSAGE_HEADERS: Transport message headers
+		// Not implemented
+
+	case 0x802e:
+		// PR_TRANSPORT_MESSAGE_HEADERS: Transport message headers
+		// Not implemented
+
+	case 0x4099:
+		// PR_MESSAGE_FLAGS: Flags indicating the status or attributes of the message
+		if intData, ok := data.(int32); ok {
+			res.Properties[class] = intData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+	case 0x1003:
+		// PR_IMPORTANCE: The importance level of the message
+		if intData, ok := data.([]uint8); ok {
+			res.Properties[class] = intData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x1004:
+		// PR_PRIORITY: The priority level of the message
+		if intData, ok := data.([]uint8); ok {
+			res.Properties[class] = intData
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x007D:
+		// PR_TRANSPORT_MESSAGE_HEADERS: Transport message headers
+		if res.TransportMessageHeaders == "" {
+			if byteData, ok := data.([]uint8); ok {
+				res.TransportMessageHeaders = string(byteData)
+			} else if strData, ok := data.(string); ok {
+				res.TransportMessageHeaders = strData
+			} else {
+				log.Printf("Unexpected type for property %x: %T", class, data)
+			}
+		}
+
+	case 0x3003, 0xC025, 0x39FE:
+		// PR_EMAIL_ADDRESS - PR_SMTP_ADDRES
+		if byteData, ok := data.([]uint8); ok {
+			address := string(byteData)
+			if isValidEmail(address) {
+				res.Address = append(res.Address, string(byteData))
+
+				if res.LastRecipient == 0 {
+					// Add the new address to TO
+					res.To = res.To + address + "; "
+				} else if res.LastRecipient == 1 {
+					// Add the new address to CC
+					res.CC = res.CC + address + "; "
+				} else if res.LastRecipient == 2 {
+					// Add the new address to BCC
+					res.BCC = res.BCC + address + "; "
+				}
+			}
+		} else if strData, ok := data.(string); ok {
+			address := strData
+			if isValidEmail(address) {
+				res.Address = append(res.Address, strData)
+
+				// Recipient ID  seems to not be present so we will copy all of them a CC
+
+				if !strings.Contains(res.To, strData) {
+					res.To = res.To + strData + "; "
+				}
+
+				/*if res.LastRecipient == 0 {
+					// Add the new address to TO
+					res.To = res.To + strData + "; "
+				} else if res.LastRecipient == 1 {
+					// Add the new address to CC
+					res.CC = res.CC + strData + "; "
+				} else if res.LastRecipient == 2 {
+					// Add the new address to BCC
+					res.BCC = res.BCC + strData + "; "
+				}*/
+			}
+
+		} else {
+			log.Printf("Unexpected type for property %x: %T", class, data)
+		}
+
+	case 0x0C24:
+		// PR_SENT_REPRESENTING_ADDRTYPE
+
 	default:
 		// Store other properties in the Properties map
+		if class == 0 {
+			return
+		}
 		if _, exists := res.Properties[class]; !exists {
 			if strData, ok := data.(string); ok {
 				res.Properties[class] = strData
@@ -398,6 +608,18 @@ func isValidEmail(email string) bool {
 		return false
 	}
 	return re.MatchString(email)
+}
+
+// ValidateEmailList validates a comma-separated list of email addresses
+func ValidateEmailList(emailList string) bool {
+	emails := strings.Split(emailList, ",")
+	for _, email := range emails {
+		email = strings.TrimSpace(email)
+		if !isValidEmail(email) {
+			return false
+		}
+	}
+	return true
 }
 
 // HandleAttachment processes and stores attachment information

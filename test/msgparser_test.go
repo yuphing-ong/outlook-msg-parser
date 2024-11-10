@@ -20,10 +20,10 @@ func TestParseMsgFile(t *testing.T) {
 	if msg.FromEmail == "" {
 		t.Error("FromEmail is empty")
 	}
-	if msg.To == "" {
+	if msg.ToDisplay == "" {
 		t.Error("To is empty")
 	}
-	if msg.CC == "" {
+	if msg.CCDisplay == "" {
 		t.Error("CC is empty")
 	}
 	if msg.BodyPlainText == "" && msg.BodyHTML == "" {

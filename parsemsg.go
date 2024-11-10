@@ -22,6 +22,7 @@ const PropsKey = "__properties_version1.0"
 
 // PropertyStreamPrefix is the prefix used for a property stream in the msg binary
 const PropertyStreamPrefix = "__substg1.0_"
+const RecepientStreamPrefix = "__recip_version1.0_"
 
 // ReplyToRegExp is a regex to extract the reply to header
 const ReplyToRegExp = "^Reply-To:\\s*(?:<?(?<nameOrAddress>.*?)>?)?\\s*(?:<(?<address>.*?)>)?$"
@@ -57,15 +58,116 @@ func parseMsgFile(file string, debug bool) (res *models.Message, err error) {
 // processEntries iterates through the entries in the mscfb.Reader and processes each entry
 func processEntries(doc *mscfb.Reader, res *models.Message, debug bool) error {
 	for entry, err := doc.Next(); err == nil; entry, err = doc.Next() {
-		if strings.HasPrefix(entry.Name, PropertyStreamPrefix) {
-			msg := extractMessageProperty(entry)
-			res.SetProperties(msg)
-			if debug {
-				fmt.Println("Entry:", entry, "Class:", msg.Class, "Mapi:", msg.Mapi, "Data:", msg.Data)
-			}
+		if !debug {
+			log.Printf("\n\n-->Processing entry: %s, size: %d, path: %s", entry.Name, entry.Size, entry.Path)
+		}
+		/*if strings.HasPrefix(entry.Name, "__recip_version1.0") {
+			processRecipientStream(entry, res)
+		} else if strings.HasPrefix(entry.Name, "__attach_version1.0_") {
+			processAttachmentStream(entry, res)
+		} else if strings.HasPrefix(entry.Name, "__substg1.0_") {
+			processPropertyStream(entry, res, debug)
+		} else if entry.Name == "__properties_version1.0" {
+			processPropertiesStream(entry, res,debug)
+		} else {
+			// Handle other types of streams if necessary
+		}*/
+		if strings.HasPrefix(entry.Name, "__substg1.0_") {
+			processPropertyStream(entry, res, debug)
 		}
 	}
 	return nil
+}
+
+func processPropertiesStream(entry *mscfb.File, res *models.Message) {
+	if entry.Size == 0 {
+		log.Printf("Properties stream %s has size 0", entry.Name)
+		return
+	}
+
+	// Read the entire entry data
+	data := make([]byte, entry.Size)
+	_, err := entry.Read(data)
+	if err != nil {
+		log.Fatalf("Failed to read properties stream: %v", err)
+	}
+
+	// Parse the properties from the data
+	offset := 0
+	for offset < len(data) {
+		// Each property is typically stored with a property tag and value
+		if offset+8 > len(data) {
+			break
+		}
+
+		// Read the property tag (4 bytes for property ID and 4 bytes for property type)
+		propTag := binary.LittleEndian.Uint32(data[offset : offset+4])
+		propType := binary.LittleEndian.Uint32(data[offset+4 : offset+8])
+		offset += 8
+
+		// Determine the length of the property value based on the property type
+		var valueLen int
+		switch propType {
+		case 0x0002: // PT_I2
+			valueLen = 2
+		case 0x0003: // PT_LONG
+			valueLen = 4
+		case 0x000B: // PT_BOOLEAN
+			valueLen = 2
+		case 0x0014: // PT_I8
+			valueLen = 8
+		case 0x0048: // PT_CLSID
+			valueLen = 16
+		case 0x00FB: // PT_SVREID
+			valueLen = int(binary.LittleEndian.Uint32(data[offset : offset+4]))
+			offset += 4
+		case 0x1E, 0x1F: // PT_STRING8, PT_UNICODE
+			valueLen = int(binary.LittleEndian.Uint32(data[offset : offset+4]))
+			offset += 4
+		default:
+			valueLen = int(binary.LittleEndian.Uint32(data[offset : offset+4]))
+			offset += 4
+		}
+
+		// Read the property value
+		if offset+valueLen > len(data) {
+			break
+		}
+		propValue := data[offset : offset+valueLen]
+		offset += valueLen
+
+		// Create a MessageEntryProperty and set the property in the message
+		property := models.MessageEntryProperty{
+			Class: fmt.Sprintf("%04x", propTag),
+			Mapi:  int64(propType),
+			Data:  extractDataFromBytes(propValue, propType),
+		}
+
+		if property.Class != "0000" {
+			res.SetProperties(property)
+		}
+	}
+}
+
+// processSubStorageStream processes a sub-storage stream and iterates through its entries
+func processSubStorageStream(entry *mscfb.File, res *models.Message, debug bool) {
+
+	subStorage, err := mscfb.New(entry)
+	if err != nil {
+		log.Fatalf("Failed to parse sub-storage: %v", err)
+	}
+	for subEntry, err := subStorage.Next(); err == nil; subEntry, err = subStorage.Next() {
+		if debug {
+			log.Printf("Processing sub-entry: %s, size: %d", subEntry.Name, subEntry.Size)
+		}
+		/*if strings.HasPrefix(subEntry.Name, "__recip_version1.0_") {
+			processRecipientStream(subEntry, res)
+		} else if strings.HasPrefix(subEntry.Name, "__attach_version1.0_") {
+			processAttachmentStream(subEntry, res)
+		} else {
+			processPropertyStream(subEntry, res, debug)
+		}*/
+	}
 }
 
 // extractMessageProperty processes an entry and returns a MessageEntryProperty
@@ -79,6 +181,124 @@ func extractMessageProperty(entry *mscfb.File) models.MessageEntryProperty {
 		Data:  data,
 	}
 	return messageProperty
+}
+
+func parseEntryName(entry *mscfb.File) models.MessageEntryProperty {
+	name := entry.Name
+	res := models.MessageEntryProperty{}
+	if strings.HasPrefix(name, PropertyStreamPrefix) {
+		val := name[len(PropertyStreamPrefix):]
+		if len(val) < 8 {
+			log.Println("Invalid entry name length")
+			return res
+		}
+		class := val[0:4]
+		typeEntry := val[4:8]
+		mapi, err := strconv.ParseInt(typeEntry, 16, 64)
+		if err != nil {
+			log.Printf("Error parsing MAPI type: %v", err)
+			return res
+		}
+		res = models.MessageEntryProperty{
+			Class: class,
+			Mapi:  mapi,
+		}
+	}
+	return res
+}
+
+func processPropertyStream(entry *mscfb.File, res *models.Message, debug bool) {
+
+	msg := extractMessageProperty(entry)
+
+	log.Printf("***** Processing Property Stream: %+v", msg)
+
+	if len(entry.Path) > 0 && strings.Contains(entry.Path[0], "__recip_version1.0_") {
+		// Recipient stream
+		processRecipientStream(entry, &msg, res)
+	}
+
+	res.SetProperties(msg)
+
+	// find in Data the string "boluda"
+	if msg.Data != nil {
+		switch msg.Data.(type) {
+		case string:
+			if strings.Contains(msg.Data.(string), "wilhelmsen.com") {
+				fmt.Println("Found wilhelmsen.com in:", msg.Data)
+			}
+		case []string:
+			for _, s := range msg.Data.([]string) {
+				if strings.Contains(s, "wilhelmsen.com") {
+					fmt.Println("Found wilhelmsen.com in:", s)
+				}
+			}
+		}
+	}
+}
+
+func processRecipientStream(entry *mscfb.File, msg *models.MessageEntryProperty, res *models.Message) {
+
+	// Determine recipient type and email address
+
+	log.Printf("############# Recipient Data: %v", msg.Data)
+
+	recipientIDStr := entry.Path[0][len("__recip_version1.0_#"):]
+
+	/*switch recipientID {
+	case "00000000":
+		msg.Class = "RecipientType"
+		msg.Mapi = 0x0C15
+		msg.Data = "Originator"
+	case "00000001":
+		msg.Class = "RecipientType"
+		msg.Mapi = 0x0C15
+		msg.Data = "To"
+	case "00000002":
+		msg.Class = "RecipientType"
+		msg.Mapi = 0x0C15
+		msg.Data = "CC"
+	case "00000003":
+		msg.Class = "RecipientType"
+		msg.Mapi = 0x0C15
+		msg.Data = "BCC"
+	}*/
+
+	// If recipient ID is not 0, set it as TO
+
+	recipientID, err := strconv.Atoi(recipientIDStr)
+	if err != nil {
+		return
+	}
+	if recipientID != 0 {
+		res.LastRecipient = recipientID
+	}
+	log.Printf("##################>Parsed Recipient: %+v", msg)
+}
+
+// processAttachmentStream processes an attachment stream and sets the attachment properties in the Message instance
+func processAttachmentStream(entry *mscfb.File, msg *models.Message) {
+	// Iterate through the properties in the attachment stream
+	/*for {
+		prop, err := entry.Next()
+		if err == mscfb.EOF {
+			break
+		}
+		if err != nil {
+			log.Fatalf("Failed to read property: %v", err)
+		}
+
+		// Parse the property name and extract data
+		property := parseEntryName(prop)
+		data := extractData(prop, property)
+		property.Data = data
+
+		// Set the properties of the message
+		msg.SetProperties(property)
+	}
+
+	// Print the parsed attachment for manual verification
+	log.Printf("Parsed Attachment: %+v", msg)*/
 }
 
 // extractData extracts the data from the entry based on the analysis result
@@ -297,26 +517,29 @@ func extractData(entry *mscfb.File, info models.MessageEntryProperty) interface{
 	return ""
 }
 
-func parseEntryName(entry *mscfb.File) models.MessageEntryProperty {
-	name := entry.Name
-	res := models.MessageEntryProperty{}
-	if strings.HasPrefix(name, PropertyStreamPrefix) {
-		val := name[len(PropertyStreamPrefix):]
-		if len(val) < 8 {
-			log.Println("Invalid entry name length")
-			return res
+func extractDataFromBytes(data []byte, propType uint32) interface{} {
+	switch propType {
+	case 0x0002: // PT_I2
+		return int16(binary.LittleEndian.Uint16(data))
+	case 0x0003: // PT_LONG
+		return int32(binary.LittleEndian.Uint32(data))
+	case 0x000B: // PT_BOOLEAN
+		return binary.LittleEndian.Uint16(data) != 0
+	case 0x0014: // PT_I8
+		return int64(binary.LittleEndian.Uint64(data))
+	case 0x0048: // PT_CLSID
+		return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", binary.LittleEndian.Uint32(data[0:4]), binary.LittleEndian.Uint16(data[4:6]), binary.LittleEndian.Uint16(data[6:8]), binary.BigEndian.Uint16(data[8:10]), data[10:16])
+	case 0x1E: // PT_STRING8
+		return string(data)
+	case 0x1F: // PT_UNICODE
+		runes := make([]rune, len(data)/2)
+		for i := 0; i < len(data)-1; i += 2 {
+			ch := (int)(data[i+1])
+			cl := (int)(data[i]) & 0xff
+			runes[i/2] = (rune)((ch << 8) + cl)
 		}
-		class := val[0:4]
-		typeEntry := val[4:8]
-		mapi, err := strconv.ParseInt(typeEntry, 16, 64)
-		if err != nil {
-			log.Printf("Error parsing MAPI type: %v", err)
-			return res
-		}
-		res = models.MessageEntryProperty{
-			Class: class,
-			Mapi:  mapi,
-		}
+		return string(runes)
+	default:
+		return data
 	}
-	return res
 }
