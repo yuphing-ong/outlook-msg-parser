@@ -58,7 +58,7 @@ func parseMsgFile(file string, debug bool) (res *models.Message, err error) {
 // processEntries iterates through the entries in the mscfb.Reader and processes each entry
 func processEntries(doc *mscfb.Reader, res *models.Message, debug bool) error {
 	for entry, err := doc.Next(); err == nil; entry, err = doc.Next() {
-		if !debug {
+		if debug {
 			log.Printf("\n\n-->Processing entry: %s, size: %d, path: %s", entry.Name, entry.Size, entry.Path)
 		}
 		/*if strings.HasPrefix(entry.Name, "__recip_version1.0") {
@@ -81,7 +81,7 @@ func processEntries(doc *mscfb.Reader, res *models.Message, debug bool) error {
 
 func processPropertiesStream(entry *mscfb.File, res *models.Message) {
 	if entry.Size == 0 {
-		log.Printf("Properties stream %s has size 0", entry.Name)
+		//log.Printf("Properties stream %s has size 0", entry.Name)
 		return
 	}
 
@@ -89,7 +89,7 @@ func processPropertiesStream(entry *mscfb.File, res *models.Message) {
 	data := make([]byte, entry.Size)
 	_, err := entry.Read(data)
 	if err != nil {
-		log.Fatalf("Failed to read properties stream: %v", err)
+		//log.Fatalf("Failed to read properties stream: %v", err)
 	}
 
 	// Parse the properties from the data
@@ -154,7 +154,7 @@ func processSubStorageStream(entry *mscfb.File, res *models.Message, debug bool)
 
 	subStorage, err := mscfb.New(entry)
 	if err != nil {
-		log.Fatalf("Failed to parse sub-storage: %v", err)
+		//log.Fatalf("Failed to parse sub-storage: %v", err)
 	}
 	for subEntry, err := subStorage.Next(); err == nil; subEntry, err = subStorage.Next() {
 		if debug {
@@ -211,7 +211,9 @@ func processPropertyStream(entry *mscfb.File, res *models.Message, debug bool) {
 
 	msg := extractMessageProperty(entry)
 
-	log.Printf("***** Processing Property Stream: %+v", msg)
+	if debug {
+		log.Printf("***** Processing Property Stream: %+v", msg)
+	}
 
 	if len(entry.Path) > 0 && strings.Contains(entry.Path[0], "__recip_version1.0_") {
 		// Recipient stream
@@ -220,28 +222,13 @@ func processPropertyStream(entry *mscfb.File, res *models.Message, debug bool) {
 
 	res.SetProperties(msg)
 
-	// find in Data the string "boluda"
-	if msg.Data != nil {
-		switch msg.Data.(type) {
-		case string:
-			if strings.Contains(msg.Data.(string), "wilhelmsen.com") {
-				fmt.Println("Found wilhelmsen.com in:", msg.Data)
-			}
-		case []string:
-			for _, s := range msg.Data.([]string) {
-				if strings.Contains(s, "wilhelmsen.com") {
-					fmt.Println("Found wilhelmsen.com in:", s)
-				}
-			}
-		}
-	}
 }
 
 func processRecipientStream(entry *mscfb.File, msg *models.MessageEntryProperty, res *models.Message) {
 
 	// Determine recipient type and email address
 
-	log.Printf("############# Recipient Data: %v", msg.Data)
+	//log.Printf("############# Recipient Data: %v", msg.Data)
 
 	recipientIDStr := entry.Path[0][len("__recip_version1.0_#"):]
 
@@ -273,7 +260,7 @@ func processRecipientStream(entry *mscfb.File, msg *models.MessageEntryProperty,
 	if recipientID != 0 {
 		res.LastRecipient = recipientID
 	}
-	log.Printf("##################>Parsed Recipient: %+v", msg)
+	////log.Printf("##################>Parsed Recipient: %+v", msg)
 }
 
 // processAttachmentStream processes an attachment stream and sets the attachment properties in the Message instance
