@@ -117,9 +117,18 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 		if res.BodyPlainText == "" {
 			switch v := data.(type) {
 			case []uint8:
-				res.BodyPlainText = string(v)
+				bodyText := string(v)
+				if isValidText(bodyText) {
+					res.BodyPlainText = bodyText
+				} else {
+					//log.Printf("Invalid PR_BODY content: %v", v)
+				}
 			case string:
-				res.BodyPlainText = v
+				if isValidText(v) {
+					res.BodyPlainText = v
+				} else {
+					//log.Printf("Invalid PR_BODY content: %s", v)
+				}
 			default:
 				log.Printf("Unexpected type for property %x: %T", class, data)
 			}
@@ -178,9 +187,18 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 		if res.BodyHTML == "" {
 			switch v := data.(type) {
 			case []uint8:
-				res.BodyHTML = string(v)
+				bodyHTML := string(v)
+				if isValidHTML(bodyHTML) {
+					res.BodyHTML = bodyHTML
+				} else {
+					//log.Printf("Invalid PR_BODY_HTML content: %v", v)
+				}
 			case string:
-				res.BodyHTML = v
+				if isValidHTML(v) {
+					res.BodyHTML = v
+				} else {
+					//log.Printf("Invalid PR_BODY_HTML content: %s", v)
+				}
 			default:
 				log.Printf("Unexpected type for property %x: %T", class, data)
 			}
@@ -631,4 +649,24 @@ func (res *Message) HandleAttachment(entry *mscfb.File) {
 		// Add other relevant fields and processing as needed
 	}
 	res.Attachments = append(res.Attachments, attachment)
+}
+
+func isValidText(text string) bool {
+	// Check if the text contains valid characters and is not binary data
+	for _, r := range text {
+		if r == '\uFFFD' || (r < 32 && r != '\n' && r != '\r' && r != '\t') {
+			return false
+		}
+	}
+	return true
+}
+
+func isValidHTML(html string) bool {
+	// Check if the HTML contains valid characters and is not binary data
+	for _, r := range html {
+		if r == '\uFFFD' || (r < 32 && r != '\n' && r != '\r' && r != '\t') {
+			return false
+		}
+	}
+	return true
 }
