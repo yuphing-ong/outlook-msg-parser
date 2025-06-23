@@ -65,6 +65,11 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 		return
 	}
 
+	// --- Robust body and HTML property handling ---
+	var bodyCandidates []string
+	var htmlCandidates []string
+
+	// In the switch, collect all body and HTML candidates
 	switch class {
 	case 0x1a:
 		// PR_MESSAGE_CLASS: The message class of the message
@@ -114,23 +119,27 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 
 	case 0x1000, 0x3ff9, 0x65e0, 0x65e2, 0xff9, 0x120b:
 		// PR_BODY: The plain text body of the message
-		if res.BodyPlainText == "" {
-			switch v := data.(type) {
-			case []uint8:
-				bodyText := string(v)
-				if isValidText(bodyText) {
-					res.BodyPlainText = bodyText
-				} else {
-					//log.Printf("Invalid PR_BODY content: %v", v)
-				}
-			case string:
-				if isValidText(v) {
-					res.BodyPlainText = v
-				} else {
-					//log.Printf("Invalid PR_BODY content: %s", v)
-				}
-			default:
-				log.Printf("Unexpected type for property %x: %T", class, data)
+		if v, ok := data.([]uint8); ok {
+			str := string(v)
+			if isValidText(str) {
+				bodyCandidates = append(bodyCandidates, str)
+			}
+		} else if v, ok := data.(string); ok {
+			if isValidText(v) {
+				bodyCandidates = append(bodyCandidates, v)
+			}
+		}
+
+	case 0x1001, 0x1013, 0x3ffb, 0x65e1, 0x65e3, 0x5ff7, 0xc25, 0xf03:
+		// PR_BODY_HTML: The HTML body of the message
+		if v, ok := data.([]uint8); ok {
+			str := string(v)
+			if isValidHTML(str) {
+				htmlCandidates = append(htmlCandidates, str)
+			}
+		} else if v, ok := data.(string); ok {
+			if isValidHTML(v) {
+				htmlCandidates = append(htmlCandidates, v)
 			}
 		}
 
@@ -180,28 +189,6 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 			res.Properties[class] = floatData
 		} else {
 			log.Printf("Unexpected type for property %x: %T", class, data)
-		}
-
-	case 0x1001, 0x1013, 0x3ffb, 0x65e1, 0x65e3, 0x5ff7, 0xc25, 0xf03:
-		// PR_BODY_HTML: The HTML body of the message
-		if res.BodyHTML == "" {
-			switch v := data.(type) {
-			case []uint8:
-				bodyHTML := string(v)
-				if isValidHTML(bodyHTML) {
-					res.BodyHTML = bodyHTML
-				} else {
-					//log.Printf("Invalid PR_BODY_HTML content: %v", v)
-				}
-			case string:
-				if isValidHTML(v) {
-					res.BodyHTML = v
-				} else {
-					//log.Printf("Invalid PR_BODY_HTML content: %s", v)
-				}
-			default:
-				log.Printf("Unexpected type for property %x: %T", class, data)
-			}
 		}
 
 	case 0x1002:
@@ -595,7 +582,7 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 					res.CC = res.CC + strData + "; "
 				} else if res.LastRecipient == 2 {
 					// Add the new address to BCC
-					res.BCC = res.BCC + strData + "; "
+					res.BCC = res.BCC + "; "
 				}*/
 			}
 
@@ -605,6 +592,30 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 
 	case 0x0C24:
 		// PR_SENT_REPRESENTING_ADDRTYPE
+
+	// Handle attachment file name properties (PR_ATTACH_FILENAME, PR_ATTACH_LONG_FILENAME)
+	case 0x3701, 0x371d:
+		if byteData, ok := data.([]uint8); ok {
+			res.Properties[class] = string(byteData)
+		} else if strData, ok := data.(string); ok {
+			res.Properties[class] = strData
+		}
+
+	// Handle PR_ATTACH_MIME_TAG (MIME tag for attachment)
+	case 0x8004:
+		if strSlice, ok := data.([]string); ok {
+			res.Properties[class] = strings.Join(strSlice, ", ")
+		} else if strData, ok := data.(string); ok {
+			res.Properties[class] = strData
+		}
+
+	// Handle string properties that may come as []uint8
+	case 0x1010, 0x1012, 0x101d, 0x3019, 0x301b, 0x8021:
+		if byteData, ok := data.([]uint8); ok {
+			res.Properties[class] = string(byteData)
+		} else if strData, ok := data.(string); ok {
+			res.Properties[class] = strData
+		}
 
 	default:
 		// Store other properties in the Properties map
@@ -618,6 +629,27 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 				log.Printf("Unexpected type for property %x: %T", class, data)
 			}
 		}
+	}
+
+	// After the switch, select the best HTML and body
+	if len(htmlCandidates) > 0 {
+		// Pick the longest valid HTML
+		best := htmlCandidates[0]
+		for _, h := range htmlCandidates[1:] {
+			if len(h) > len(best) {
+				best = h
+			}
+		}
+		res.BodyHTML = best
+	} else if len(bodyCandidates) > 0 {
+		// Pick the longest valid plain text
+		best := bodyCandidates[0]
+		for _, b := range bodyCandidates[1:] {
+			if len(b) > len(best) {
+				best = b
+			}
+		}
+		res.BodyPlainText = best
 	}
 }
 func isValidEmail(email string) bool {
