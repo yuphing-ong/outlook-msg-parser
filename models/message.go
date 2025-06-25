@@ -121,32 +121,23 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 	case 0x1000, 0x3ff9, 0x65e0, 0x65e2, 0xff9, 0x120b:
 		// PR_BODY: The plain text body of the message
 		if v, ok := data.([]uint8); ok {
-			str := string(v)
-			text := OnlyPrintableCharacters(str)
-			if len(text) > 0 && text != "\n" && text != "\r" && text != "\r\n" {
-				res.bodyCandidates = append(res.bodyCandidates, text)
+			if cleaned, ok := CleanAndAcceptBodyCandidate(string(v), 10); ok {
+				res.bodyCandidates = append(res.bodyCandidates, cleaned)
 			}
 		} else if v, ok := data.(string); ok {
-			str := string(v)
-			text := OnlyPrintableCharacters(str)
-			if len(text) > 0 && text != "\n" && text != "\r" && text != "\r\n" {
-				res.bodyCandidates = append(res.bodyCandidates, text)
+			if cleaned, ok := CleanAndAcceptBodyCandidate(v, 10); ok {
+				res.bodyCandidates = append(res.bodyCandidates, cleaned)
 			}
 		}
-
 	case 0x1001, 0x1013, 0x3ffb, 0x65e1, 0x65e3, 0x5ff7, 0xc25, 0xf03:
 		// PR_BODY_HTML: The HTML body of the message
 		if v, ok := data.([]uint8); ok {
-			str := string(v)
-			text := OnlyPrintableCharacters(str)
-			if len(text) > 0 && text != "\n" && text != "\r" && text != "\r\n" {
-				res.htmlCandidates = append(res.htmlCandidates, text)
+			if cleaned, ok := CleanAndAcceptBodyCandidate(string(v), 10); ok {
+				res.htmlCandidates = append(res.htmlCandidates, cleaned)
 			}
 		} else if v, ok := data.(string); ok {
-			str := string(v)
-			text := OnlyPrintableCharacters(str)
-			if len(text) > 0 && text != "\n" && text != "\r" && text != "\r\n" {
-				res.htmlCandidates = append(res.htmlCandidates, text)
+			if cleaned, ok := CleanAndAcceptBodyCandidate(v, 10); ok {
+				res.htmlCandidates = append(res.htmlCandidates, cleaned)
 			}
 		}
 
@@ -662,6 +653,40 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 	}
 }
 
+// CleanAndAcceptBodyCandidate cleans the input and returns it if it is a valid body candidate.
+func CleanAndAcceptBodyCandidate(input string, minLen int) (string, bool) {
+	cleaned := strings.TrimSpace(input)
+	if len(cleaned) < minLen {
+		return "", false // too short
+	}
+	// Filter Exchange/X.500 address patterns
+	if strings.Contains(cleaned, "/O=") && strings.Contains(cleaned, "/CN=") {
+		return "", false
+	}
+	// Filter if more than 40% of runes are not letters, digits, space, or common punctuation
+	nonLetter := 0
+	total := 0
+	var output strings.Builder
+	for _, r := range cleaned {
+		if unicode.IsPrint(r) || r == '\n' || r == '\r' || r == '\t' {
+			output.WriteRune(r)
+			total++
+			if !(unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r) || strings.ContainsRune(",.;:!?()[]{}-_'\"/@#%&$*", r)) {
+				nonLetter++
+			}
+		}
+	}
+	final := output.String()
+	if total == 0 || float64(nonLetter)/float64(total) > 0.4 {
+		return "", false
+	}
+	// Filter if contains too many replacement chars (�)
+	if strings.Count(final, "�") > 2 {
+		return "", false
+	}
+	return final, true
+}
+
 func isValidEmail(email string) bool {
 	re := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}$`)
 	if (len(email) > 0) && (len(email) > 60) {
@@ -710,7 +735,9 @@ func (res *Message) CalculateFinalBody() {
 			}
 		}
 		res.BodyHTML = best
-	} else if len(res.bodyCandidates) > 0 {
+	}
+
+	if len(res.bodyCandidates) > 0 {
 		// Pick the longest valid plain text
 		best := res.bodyCandidates[0]
 		for _, b := range res.bodyCandidates[1:] {
@@ -720,14 +747,18 @@ func (res *Message) CalculateFinalBody() {
 		}
 		res.BodyPlainText = best
 	}
-}
 
-func OnlyPrintableCharacters(input string) string {
-	var output strings.Builder
-	for _, r := range input {
-		if unicode.IsPrint(r) || r == '\n' || r == '\r' || r == '\t' {
-			output.WriteRune(r)
-		}
+	if len(res.BodyPlainText) > 0 && len(res.BodyHTML) == 0 {
+		// If we have plain text but no HTML, set HTML to the plain text
+		res.BodyHTML = res.BodyPlainText
 	}
-	return output.String()
+	if len(res.BodyHTML) > 0 && len(res.BodyPlainText) == 0 {
+		// If we have HTML but no plain text, set plain text to the HTML
+		res.BodyPlainText = res.BodyHTML
+	}
+	if len(res.BodyPlainText) == 0 && len(res.BodyHTML) == 0 {
+		// If both are empty, set them to a default value or leave them empty
+		res.BodyPlainText = "No content available"
+		res.BodyHTML = "No content available"
+	}
 }
