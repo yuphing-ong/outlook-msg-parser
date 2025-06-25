@@ -48,10 +48,14 @@ func parseMsgFile(file string, debug bool) (res *models.Message, err error) {
 	if err != nil {
 		return nil, err
 	}
+
 	err = processEntries(doc, res, debug)
 	if err != nil {
 		return nil, err
 	}
+
+	res.CalculateFinalBody()
+
 	return res, nil
 }
 

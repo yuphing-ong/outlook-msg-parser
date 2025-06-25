@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"regexp"
 
@@ -38,6 +39,9 @@ type Message struct {
 	TransportMessageHeaders string                // Message Headers
 	Address                 []string              // Email Address
 	LastRecipient           int                   // Last recipient of the message
+
+	bodyCandidates []string
+	htmlCandidates []string
 }
 
 type Attachment struct {
@@ -47,7 +51,7 @@ type Attachment struct {
 
 const AttachmentPrefix = "__attach_"
 
-// SetProperties sets the message properties
+// SetProperties sets the message properties and collects body/html candidates
 func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 	name := msgProps.Class
 	data := msgProps.Data
@@ -66,9 +70,6 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 	}
 
 	// --- Robust body and HTML property handling ---
-	var bodyCandidates []string
-	var htmlCandidates []string
-
 	// In the switch, collect all body and HTML candidates
 	switch class {
 	case 0x1a:
@@ -121,12 +122,15 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 		// PR_BODY: The plain text body of the message
 		if v, ok := data.([]uint8); ok {
 			str := string(v)
-			if isValidText(str) {
-				bodyCandidates = append(bodyCandidates, str)
+			text := OnlyPrintableCharacters(str)
+			if len(text) > 0 && text != "\n" && text != "\r" && text != "\r\n" {
+				res.bodyCandidates = append(res.bodyCandidates, text)
 			}
 		} else if v, ok := data.(string); ok {
-			if isValidText(v) {
-				bodyCandidates = append(bodyCandidates, v)
+			str := string(v)
+			text := OnlyPrintableCharacters(str)
+			if len(text) > 0 && text != "\n" && text != "\r" && text != "\r\n" {
+				res.bodyCandidates = append(res.bodyCandidates, text)
 			}
 		}
 
@@ -134,12 +138,15 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 		// PR_BODY_HTML: The HTML body of the message
 		if v, ok := data.([]uint8); ok {
 			str := string(v)
-			if isValidHTML(str) {
-				htmlCandidates = append(htmlCandidates, str)
+			text := OnlyPrintableCharacters(str)
+			if len(text) > 0 && text != "\n" && text != "\r" && text != "\r\n" {
+				res.htmlCandidates = append(res.htmlCandidates, text)
 			}
 		} else if v, ok := data.(string); ok {
-			if isValidHTML(v) {
-				htmlCandidates = append(htmlCandidates, v)
+			str := string(v)
+			text := OnlyPrintableCharacters(str)
+			if len(text) > 0 && text != "\n" && text != "\r" && text != "\r\n" {
+				res.htmlCandidates = append(res.htmlCandidates, text)
 			}
 		}
 
@@ -617,6 +624,29 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 			res.Properties[class] = strData
 		}
 
+	// Handle additional properties based on log
+	case 0x100a:
+		// PR_BODY_HTML_ALT or similar: treat as string if possible
+		if byteData, ok := data.([]uint8); ok {
+			res.Properties[class] = string(byteData)
+		} else if strData, ok := data.(string); ok {
+			res.Properties[class] = strData
+		}
+	case 0x8005:
+		// Possibly PR_ATTACH_CONTENT_ID or similar, can be []string or string
+		if strSlice, ok := data.([]string); ok {
+			res.Properties[class] = strings.Join(strSlice, ", ")
+		} else if strData, ok := data.(string); ok {
+			res.Properties[class] = strData
+		}
+	case 0x8011, 0x8025, 0x802d:
+		// Unknown, but treat []uint8 as string
+		if byteData, ok := data.([]uint8); ok {
+			res.Properties[class] = string(byteData)
+		} else if strData, ok := data.(string); ok {
+			res.Properties[class] = strData
+		}
+
 	default:
 		// Store other properties in the Properties map
 		if class == 0 {
@@ -630,28 +660,8 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 			}
 		}
 	}
-
-	// After the switch, select the best HTML and body
-	if len(htmlCandidates) > 0 {
-		// Pick the longest valid HTML
-		best := htmlCandidates[0]
-		for _, h := range htmlCandidates[1:] {
-			if len(h) > len(best) {
-				best = h
-			}
-		}
-		res.BodyHTML = best
-	} else if len(bodyCandidates) > 0 {
-		// Pick the longest valid plain text
-		best := bodyCandidates[0]
-		for _, b := range bodyCandidates[1:] {
-			if len(b) > len(best) {
-				best = b
-			}
-		}
-		res.BodyPlainText = best
-	}
 }
+
 func isValidEmail(email string) bool {
 	re := regexp.MustCompile(`^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)*\.[a-zA-Z]{2,}$`)
 	if (len(email) > 0) && (len(email) > 60) {
@@ -683,22 +693,41 @@ func (res *Message) HandleAttachment(entry *mscfb.File) {
 	res.Attachments = append(res.Attachments, attachment)
 }
 
-func isValidText(text string) bool {
-	// Check if the text contains valid characters and is not binary data
-	for _, r := range text {
-		if r == '\uFFFD' || (r < 32 && r != '\n' && r != '\r' && r != '\t') {
-			return false
+// CalculateFinalBody selects the best HTML or plain text body from the candidate arrays.
+//
+// Reasoning:
+// - If any HTML candidates are present, the longest one is chosen as BodyHTML (HTML is preferred for fidelity).
+// - If no HTML is present but plain text candidates exist, the longest one is chosen as BodyPlainText.
+// - If neither is present, both fields remain empty.
+// This approach ensures the richest available content is used, and avoids short/empty/partial bodies.
+func (res *Message) CalculateFinalBody() {
+	if len(res.htmlCandidates) > 0 {
+		// Pick the longest valid HTML
+		best := res.htmlCandidates[0]
+		for _, h := range res.htmlCandidates[1:] {
+			if len(h) > len(best) {
+				best = h
+			}
 		}
+		res.BodyHTML = best
+	} else if len(res.bodyCandidates) > 0 {
+		// Pick the longest valid plain text
+		best := res.bodyCandidates[0]
+		for _, b := range res.bodyCandidates[1:] {
+			if len(b) > len(best) {
+				best = b
+			}
+		}
+		res.BodyPlainText = best
 	}
-	return true
 }
 
-func isValidHTML(html string) bool {
-	// Check if the HTML contains valid characters and is not binary data
-	for _, r := range html {
-		if r == '\uFFFD' || (r < 32 && r != '\n' && r != '\r' && r != '\t') {
-			return false
+func OnlyPrintableCharacters(input string) string {
+	var output strings.Builder
+	for _, r := range input {
+		if unicode.IsPrint(r) || r == '\n' || r == '\r' || r == '\t' {
+			output.WriteRune(r)
 		}
 	}
-	return true
+	return output.String()
 }
