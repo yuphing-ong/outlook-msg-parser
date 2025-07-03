@@ -680,9 +680,23 @@ func CleanAndAcceptBodyCandidate(input string, minLen int) (string, bool) {
 	if total == 0 || float64(nonLetter)/float64(total) > 0.4 {
 		return "", false
 	}
-	// Filter if contains too many replacement chars (�)
-	if strings.Count(final, "�") > 2 {
-		return "", false
+	// Filter if contains too many replacement chars (�) relative to length
+	replacementCount := strings.Count(final, "�")
+	length := len(final)
+	if length > 0 {
+		// Allow up to 20% for very short strings, 10% for medium, 5% for long
+		var maxAllowed int
+		switch {
+		case length < 50:
+			maxAllowed = length / 5 // 20%
+		case length < 500:
+			maxAllowed = length / 10 // 10%
+		default:
+			maxAllowed = length / 20 // 5%
+		}
+		if replacementCount > maxAllowed && replacementCount > 2 {
+			return "", false
+		}
 	}
 	return final, true
 }

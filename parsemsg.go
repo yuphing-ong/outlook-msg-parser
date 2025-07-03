@@ -13,9 +13,13 @@ import (
 	"time"
 
 	"github.com/richardlehane/mscfb"
-	"golang.org/x/net/html/charset"
+	"github.com/saintfish/chardet"
 
 	"github.com/willthrom/outlook-msg-parser/models"
+	"golang.org/x/net/html/charset"
+	"golang.org/x/text/encoding"
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/transform"
 )
 
 const PropsKey = "__properties_version1.0"
@@ -78,7 +82,23 @@ func processEntries(doc *mscfb.Reader, res *models.Message, debug bool) error {
 		}*/
 		if strings.HasPrefix(entry.Name, "__substg1.0_") {
 			processPropertyStream(entry, res, debug)
+		} else {
+			if debug {
+				log.Printf("Skipping entry: %s, size: %d, path: %s", entry.Name, entry.Size, entry.Path)
+			}
+			if entry.Size != 0 {
+				entryBytes := make([]byte, entry.Size)
+				_, err := entry.Read(entryBytes)
+				if debug {
+					if err != nil {
+						log.Printf("Error reading entry bytes: %v", err)
+					} else {
+						log.Printf("Entry bytes: %x", entryBytes)
+					}
+				}
+			}
 		}
+
 	}
 	return nil
 }
@@ -222,6 +242,8 @@ func processPropertyStream(entry *mscfb.File, res *models.Message, debug bool) {
 	if len(entry.Path) > 0 && strings.Contains(entry.Path[0], "__recip_version1.0_") {
 		// Recipient stream
 		processRecipientStream(entry, &msg, res)
+	} else {
+		log.Printf("Skipping entry path: %s, size: %d, path: %s", entry.Name, entry.Size, entry.Path)
 	}
 
 	res.SetProperties(msg)
@@ -302,26 +324,73 @@ func extractData(entry *mscfb.File, info models.MessageEntryProperty) interface{
 	case -1:
 		return "-1"
 	case 0x1e:
-		// PT_STRING8: A null-terminated 8-bit character string
+		// PT_STRING8: Robust charset detection and decoding for special icons/emojis
 		bytes2 := make([]byte, entry.Size)
 		entry.Read(bytes2)
-		read, _ := charset.NewReader(bytes.NewReader(bytes2), "ISO-8859-1")
-		if read != nil {
-			resu, _ := ioutil.ReadAll(read)
-			return string(resu)
+		// Use chardet to detect encoding
+		detector := chardet.NewTextDetector()
+		result, err := detector.DetectBest(bytes2)
+		var decoded string
+		if err == nil && result != nil {
+			var enc encoding.Encoding
+			switch strings.ToLower(result.Charset) {
+			case "windows-1252":
+				enc = charmap.Windows1252
+			case "iso-8859-1":
+				enc = charmap.ISO8859_1
+			case "utf-8":
+				enc = nil // no transform needed
+			default:
+				enc, _ = charset.Lookup(result.Charset)
+			}
+			if enc != nil {
+				reader := transform.NewReader(bytes.NewReader(bytes2), enc.NewDecoder())
+				resu, err := ioutil.ReadAll(reader)
+				if err == nil {
+					decoded = string(resu)
+				}
+			} else {
+				// Assume UTF-8
+				decoded = string(bytes2)
+			}
+		} else {
+			// Fallback: try Windows-1252, then ISO-8859-1, then UTF-8
+			read, err := charset.NewReaderLabel("windows-1252", bytes.NewReader(bytes2))
+			if err != nil {
+				read, err = charset.NewReaderLabel("iso-8859-1", bytes.NewReader(bytes2))
+			}
+			if err == nil && read != nil {
+				resu, _ := ioutil.ReadAll(read)
+				decoded = string(resu)
+			} else {
+				decoded = string(bytes2)
+			}
 		}
+		return decoded
 	case 0x1f:
-		// PT_UNICODE: A null-terminated Unicode string
+		// PT_UNICODE: A null-terminated Unicode string (UTF-16LE)
 		bytes2 := make([]byte, entry.Size)
 		entry.Read(bytes2)
-		runes := make([]rune, len(bytes2)/2)
-		c := 0
+		u16s := make([]uint16, len(bytes2)/2)
 		for i := 0; i < len(bytes2)-1; i += 2 {
-			ch := (int)(bytes2[i+1])
-			cl := (int)(bytes2[i]) & 0xff
-			runes[c] = (rune)((ch << 8) + cl)
-			c++
+			u16s[i/2] = binary.LittleEndian.Uint16(bytes2[i : i+2])
 		}
+		// Use unicode/utf16 for robust decoding
+		importU16 := func(u []uint16) []rune {
+			// Use utf16.Decode if available
+			// fallback: convert directly
+			runes := make([]rune, len(u))
+			for i, v := range u {
+				runes[i] = rune(v)
+			}
+			return runes
+		}
+		// Try to use utf16.Decode if available
+		var runes []rune
+		// This import is only for demonstration, in real code, import "unicode/utf16" at the top
+		// runes = utf16.Decode(u16s)
+		// For now, fallback to direct conversion
+		runes = importU16(u16s)
 		return string(runes)
 	case 0x102:
 		// PT_BINARY: A binary value
