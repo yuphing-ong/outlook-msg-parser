@@ -243,7 +243,9 @@ func processPropertyStream(entry *mscfb.File, res *models.Message, debug bool) {
 		// Recipient stream
 		processRecipientStream(entry, &msg, res)
 	} else {
-		log.Printf("Skipping entry path: %s, size: %d, path: %s", entry.Name, entry.Size, entry.Path)
+		if debug {
+			log.Printf("Skipping entry path: %s, size: %d, path: %s", entry.Name, entry.Size, entry.Path)
+		}
 	}
 
 	res.SetProperties(msg)
