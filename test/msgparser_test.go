@@ -3,7 +3,7 @@ package main
 import (
 	"testing"
 
-	msgparser "github.com/willthrom/outlook-msg-parser"
+	msgparser "github.com/yuphing-ong/outlook-msg-parser"
 )
 
 func TestParseMsgFile(t *testing.T) {

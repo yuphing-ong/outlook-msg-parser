@@ -21,7 +21,7 @@ Orinally from https://github.com/oucema001/OutlookMessageParser-Go
 To install the library, use `go get`:
 
 ```sh
-go get github.com/willthrom/outlook-msg-parser
+go get github.com/yuphing-ong/outlook-msg-parser
 
 
 ##  Usage
@@ -35,7 +35,7 @@ import (
     "log"
     "os"
 
-    "github.com/willthrom/outlook-msg-parser"
+    "github.com/yuphing-ong/outlook-msg-parser"
 )
 
 func main() {
