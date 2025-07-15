@@ -15,7 +15,7 @@ import (
 	"github.com/richardlehane/mscfb"
 	"github.com/saintfish/chardet"
 
-	"github.com/willthrom/outlook-msg-parser/models"
+	"github.com/yuphing-ong/outlook-msg-parser/models"
 	"golang.org/x/net/html/charset"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/encoding/charmap"
