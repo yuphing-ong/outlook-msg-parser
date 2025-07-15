@@ -592,7 +592,7 @@ func (res *Message) SetProperties(msgProps MessageEntryProperty) {
 		// PR_SENT_REPRESENTING_ADDRTYPE
 
 	// Handle attachment file name properties (PR_ATTACH_FILENAME, PR_ATTACH_LONG_FILENAME)
-	case 0x3701, 0x371d:
+	case 0x3701, 0x3702, 0x371d:
 		if byteData, ok := data.([]uint8); ok {
 			res.Properties[class] = string(byteData)
 		} else if strData, ok := data.(string); ok {
