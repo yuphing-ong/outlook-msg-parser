@@ -13,8 +13,8 @@ This library is designed to handle various MAPI properties and extract relevant 
 - Compatibility with different versions of Microsoft Outlook
 
 ## Mentions to the original developer 
-I created this refactored version to clean the code, added further support to more version of the .msg files, new format types, logging, test and examples.
-Orinally from https://github.com/oucema001/OutlookMessageParser-Go 
+
+Forked from willthrom/outlook-msg-parser, added some additional properties (see below), and clear up the example, since it didn't work as expected (e.g. ParseMsgFile expects a string pointing to the file, not a *os.File)
 
 ## Installation
 
@@ -39,13 +39,8 @@ import (
 )
 
 func main() {
-    // Open the .msg file
-    file, err := os.Open("path/to/your/file.msg")
-    if err != nil {
-        log.Fatalf("Failed to open file: %v", err)
-    }
-    defer file.Close()
 
+    file = "test.msg"
     // Parse the .msg file
     msg, err := OutlookMessageParser.ParseMsgFile(file)
     if err != nil {
@@ -57,3 +52,9 @@ func main() {
 }
 
 ```
+
+## Properties added
+
+| Hex| Descriptor | Type |
+| --- | --- | --- |
+| 0x3702 | PidTagAttachEncoding | PT_Binary|
